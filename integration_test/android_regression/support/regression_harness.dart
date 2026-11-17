@@ -129,11 +129,15 @@ void regressionCase(
 final class RegressionSeed {
   const RegressionSeed({
     this.extraTopLevelTitles = const <String>[],
+    this.openChildTitles = const <String>[],
     this.completedChildTitles = const <String>[],
   });
 
   /// Open top-level tasks appended after the shared rows in manual order.
   final List<String> extraTopLevelTitles;
+
+  /// Open, undated subtasks of the shared parent, after its open child.
+  final List<String> openChildTitles;
 
   /// Already-completed subtasks of the shared parent, after its open child.
   final List<String> completedChildTitles;
@@ -157,6 +161,7 @@ final class RegressionFixture {
     required this.second,
     required this.child,
     required this.extraTasks,
+    required this.openChildren,
     required this.completedChildren,
   });
 
@@ -175,6 +180,7 @@ final class RegressionFixture {
   final TaskId second;
   final TaskId child;
   final List<TaskId> extraTasks;
+  final List<TaskId> openChildren;
   final List<TaskId> completedChildren;
   late final TasksViewModel model;
 
@@ -274,6 +280,17 @@ final class RegressionFixture {
           position: '${4 + index}',
         ),
     ];
+    final openChildren = <TaskId>[
+      for (final (index, title) in seed.openChildTitles.indexed)
+        await cache.putTask(
+          accountId: account,
+          taskListId: list,
+          remoteId: TaskRemoteId('audit-open-child-$index'),
+          title: title,
+          position: '${4 + seed.extraTopLevelTitles.length + index}',
+          parentTaskId: parent,
+        ),
+    ];
     final completedChildren = <TaskId>[
       for (final (index, title) in seed.completedChildTitles.indexed)
         await cache.putTask(
@@ -281,7 +298,8 @@ final class RegressionFixture {
           taskListId: list,
           remoteId: TaskRemoteId('audit-completed-child-$index'),
           title: title,
-          position: '${4 + seed.extraTopLevelTitles.length + index}',
+          position:
+              '${4 + seed.extraTopLevelTitles.length + seed.openChildTitles.length + index}',
           parentTaskId: parent,
           status: TaskStatus.completed,
         ),
@@ -337,6 +355,7 @@ final class RegressionFixture {
       second: second,
       child: child,
       extraTasks: extraTasks,
+      openChildren: openChildren,
       completedChildren: completedChildren,
     );
     fixture.model = TasksViewModel(

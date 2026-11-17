@@ -26,6 +26,7 @@ import '../features/tasks/widgets/bulk_add.dart';
 import '../features/tasks/widgets/quick_add.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
 import '../features/tasks/widgets/task_details.dart';
+import '../features/tasks/widgets/task_swipe.dart';
 import '../sync/health/sync_health.dart';
 import 'desktop_shortcuts.dart';
 import 'desktop_task_drag.dart';
@@ -2729,6 +2730,23 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                               viewModel.toggleBulkSelection(task.id),
                           onBeginSelection: () =>
                               viewModel.beginBulkSelection(task.id),
+                          onSwipeComplete: task.status == TaskStatus.completed
+                              ? null
+                              : () => unawaited(
+                                  viewModel.setTaskCompletion(
+                                    task.id,
+                                    TaskStatus.completed,
+                                  ),
+                                ),
+                          onSwipeSchedule: () => unawaited(
+                            // The collection outlives a row that scrolls
+                            // away or re-sorts while the sheet is open.
+                            scheduleTaskFromSwipe(
+                              this.context,
+                              TaskDetailViewModel.fromTasks(viewModel),
+                              task,
+                            ),
+                          ),
                           selected: task.id == state.selectedTaskId,
                           subtitle: <String>[
                             if (task.due != null) 'Due ${task.due}',
@@ -2779,6 +2797,8 @@ final class _DesktopTaskRow extends StatefulWidget {
     required this.bulkSelected,
     required this.onSelectionToggle,
     required this.onBeginSelection,
+    required this.onSwipeComplete,
+    required this.onSwipeSchedule,
     required this.selected,
     required this.canonicalSiblings,
     required this.manualOrderEnabled,
@@ -2804,6 +2824,12 @@ final class _DesktopTaskRow extends StatefulWidget {
   final bool bulkSelected;
   final VoidCallback onSelectionToggle;
   final VoidCallback onBeginSelection;
+
+  /// Touch swipe right; null when the row has nothing to complete.
+  final VoidCallback? onSwipeComplete;
+
+  /// Touch swipe left: quick scheduling for this row's task.
+  final VoidCallback onSwipeSchedule;
   final bool selected;
   final List<CachedTask> canonicalSiblings;
   final bool manualOrderEnabled;
@@ -3103,7 +3129,14 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
       onSecondaryTapDown: (details) => widget.selectionMode
           ? null
           : unawaited(_showContextMenu(details.globalPosition)),
-      child: _tile(task),
+      // Touch swipes act on this row's task only; selection mode gives the
+      // row tap and long press to selection instead.
+      child: TaskSwipeActions(
+        enabled: widget.enabled && !widget.selectionMode,
+        onComplete: widget.onSwipeComplete,
+        onSchedule: widget.onSwipeSchedule,
+        child: _tile(task),
+      ),
     );
     final draggable = Semantics(
       container: true,

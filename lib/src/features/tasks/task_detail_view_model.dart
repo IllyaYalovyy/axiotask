@@ -53,6 +53,18 @@ final class TaskDetailViewModel implements Listenable {
   final VoidCallback? navigateBack;
   TaskDetailState? get state => _project(_tasks.state);
 
+  /// Whether a single-task command is running, with or without a selection
+  /// (a swipe can act on a row while no task is selected).
+  bool get isCommandPending => _tasks.state.isTaskCommandPending;
+
+  /// The latest single-task command failure, with or without a selection.
+  String? get commandFailureMessage => _tasks.state.taskCommandFailureMessage;
+
+  /// The current stored version of [taskId], if it is still cached.
+  CachedTask? taskById(TaskId taskId) => _tasks.state.tasks
+      .where((candidate) => candidate.id == taskId)
+      .firstOrNull;
+
   @override
   void addListener(VoidCallback listener) => _tasks.addListener(listener);
 
@@ -151,6 +163,11 @@ final class TaskDetailViewModel implements Listenable {
           : TaskStatus.completed,
     );
   }
+
+  /// Completes [taskId] through the shared completion command. Unlike
+  /// [toggleCompletion] it never reopens a task, which is what a swipe means.
+  Future<void> complete(TaskId taskId) =>
+      _tasks.setTaskCompletion(taskId, TaskStatus.completed);
 
   Future<void> setDue(TaskId taskId, TaskDate? due) =>
       _tasks.setTaskDue(taskId, due);

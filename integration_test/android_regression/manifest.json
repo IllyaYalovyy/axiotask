@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 4,
+  "manifest_version": 5,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -75,9 +75,10 @@
       "flow": "Swipe to complete",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/touch_gestures_test.dart",
       "owner": "android-touch-gestures",
       "subsets": [
@@ -89,9 +90,10 @@
       "flow": "Swipe to schedule",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/touch_gestures_test.dart",
       "owner": "android-touch-gestures",
       "subsets": [
@@ -533,9 +535,10 @@
       "flow": "Subtask swipe scheduling",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/touch_gestures_test.dart",
       "owner": "android-touch-gestures",
       "subsets": [

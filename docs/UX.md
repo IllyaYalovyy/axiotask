@@ -61,7 +61,10 @@ and input capability, not a hard-coded platform switch.
 - Mouse hover and context menus accelerate desktop use but never hide the only
   route to an action.
 - Android touch targets meet Material accessibility guidance; swipe actions have
-  visible alternatives.
+  visible alternatives. On task rows and subtask rows a touch swipe right
+  completes the task (with the completion Undo) and a swipe left opens quick
+  scheduling for that task; short, cancelled or mostly vertical swipes do
+  nothing, and a mouse never swipes.
 - Keyboard shortcuts have discoverable menu/button equivalents and never become
   the sole workflow.
 - Focus, selection, and system-back behavior are explicit state-machine tests.

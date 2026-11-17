@@ -2718,6 +2718,245 @@ void main() {
       }
     },
   );
+
+  group('phone swipe contract (Android audit 02, 03 and 32)', () {
+    setUpAll(loadAndroidTextFont);
+    final clock = ManualClock(DateTime.utc(2026, 8, 15, 12));
+    const viewport = PhoneViewport(360, PhoneOrientation.portrait, 1);
+    final row11 = find.byKey(const Key('desktop-task-row-11'));
+    final row13 = find.byKey(const Key('desktop-task-row-13'));
+    final sheet = find.byKey(const Key('quick-date-sheet'));
+
+    Future<void> chooseFromSheet(WidgetTester tester, String label) async {
+      await tester.tap(find.descendant(of: sheet, matching: find.text(label)));
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+    }
+
+    testWidgets('02 a right swipe completes exactly the swiped row', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+
+      await tester.drag(row13, const Offset(130, 0));
+      await tester.pumpAndSettle();
+      final command = fixture.tasks.applied.single as SetTaskCompletionCommand;
+      expect(command.taskId, const TaskId(13));
+      expect(command.status, TaskStatus.completed);
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+
+      // Short or vertical drags send nothing.
+      fixture.tasks.applied.clear();
+      await tester.drag(row11, const Offset(60, 0));
+      await tester.drag(row11, const Offset(100, 200));
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.applied, isEmpty);
+      expect(fixture.tasks.dueChanges, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('03 a left swipe schedules exactly the swiped row', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+
+      await tester.drag(row11, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Schedule “Cached parent”'),
+        ),
+        findsOneWidget,
+      );
+      // Back and a tap outside cancel without a command.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      await tester.drag(row11, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(180, 80));
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      expect(fixture.tasks.dueChanges, isEmpty);
+      expect(fixture.tasks.applied, isEmpty);
+
+      await tester.drag(row11, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      await chooseFromSheet(tester, 'Next week');
+      await tester.drag(row13, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      await chooseFromSheet(tester, 'Tomorrow');
+      await tester.drag(row13, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      await chooseFromSheet(tester, 'Clear date');
+      await tester.drag(row13, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      await chooseFromSheet(tester, 'Choose date');
+      await tester.enterText(
+        find.widgetWithText(TextField, 'Due date (YYYY-MM-DD)'),
+        '2026-09-30',
+      );
+      await tester.tap(find.text('Set date'));
+      await tester.pumpAndSettle();
+      expect(find.text('Choose due date'), findsNothing);
+
+      expect(
+        fixture.tasks.dueChanges.map(
+          (command) => (command.taskId, command.due),
+        ),
+        <(TaskId, TaskDate?)>[
+          (const TaskId(11), TaskDate(2026, 8, 22)),
+          (const TaskId(13), TaskDate(2026, 8, 16)),
+          (const TaskId(13), null),
+          (const TaskId(13), TaskDate(2026, 9, 30)),
+        ],
+      );
+      expect(fixture.tasks.applied, isEmpty, reason: 'no completion');
+      expect(
+        fixture.viewModel.state.selectedTaskId,
+        isNull,
+        reason: 'scheduling from the list keeps the list',
+      );
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('row tap, long press and selection keep their meaning', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+
+      await _tapRowTitle(tester, 'Leaf task');
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(13));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      await _longPressRowTitle(tester, 'Leaf task');
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, {const TaskId(13)});
+      // In selection mode a swipe neither completes nor schedules.
+      await tester.drag(row11, const Offset(130, 0));
+      await tester.drag(row11, const Offset(-130, 0));
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      expect(fixture.viewModel.state.bulkSelectedTaskIds, {const TaskId(13)});
+      expect(fixture.tasks.applied, isEmpty);
+      expect(fixture.tasks.dueChanges, isEmpty);
+      expect(fixture.tasks.bulkApplied, isEmpty);
+    });
+
+    testWidgets('a mouse drag picks the row up for reordering, not a swipe', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+
+      final mouse = await tester.startGesture(
+        tester.getCenter(row13),
+        kind: PointerDeviceKind.mouse,
+      );
+      await mouse.moveBy(const Offset(70, 0));
+      await mouse.moveBy(const Offset(70, 0));
+      await tester.pump();
+      expect(find.text('Drop to reorder or move'), findsOneWidget);
+      await mouse.up();
+      await tester.pumpAndSettle();
+
+      // A touch swipe of the same row never starts the pointer drag.
+      await tester.drag(row11, const Offset(-130, 0));
+      await tester.pump();
+      expect(find.text('Drop to reorder or move'), findsNothing);
+      await tester.pumpAndSettle();
+      expect(sheet, findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(
+        fixture.tasks.applied.whereType<SetTaskCompletionCommand>(),
+        isEmpty,
+      );
+      expect(fixture.tasks.dueChanges, isEmpty);
+    });
+
+    testWidgets('32 subtask swipes act on the child, never the parent', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      await _tapRowTitle(tester, 'Cached parent');
+      final child = find.byKey(const ValueKey<String>('subtask-12'));
+      await tester.ensureVisible(child);
+      await tester.pumpAndSettle();
+
+      await tester.drag(child, const Offset(-60, 0));
+      await tester.drag(child, const Offset(60, 0));
+      await tester.pumpAndSettle();
+      expect(sheet, findsNothing);
+      expect(fixture.tasks.applied, isEmpty);
+
+      await tester.drag(child, const Offset(-140, 0));
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(
+          of: sheet,
+          matching: find.text('Schedule “Cached child”'),
+        ),
+        findsOneWidget,
+      );
+      await chooseFromSheet(tester, 'Tomorrow');
+      expect(fixture.tasks.dueChanges.single.taskId, const TaskId(12));
+      expect(fixture.tasks.dueChanges.single.due, TaskDate(2026, 8, 16));
+
+      await tester.drag(child, const Offset(140, 0));
+      await tester.pumpAndSettle();
+      final command = fixture.tasks.applied.single as SetTaskCompletionCommand;
+      expect(command.taskId, const TaskId(12));
+      expect(command.status, TaskStatus.completed);
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+
+      // A tap on the subtask still opens it.
+      await tester.tap(find.text('Cached child'));
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(12));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a completed subtask is never reopened by a swipe', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        viewport,
+        clock: clock,
+        snapshot: CachedTasksSnapshot(
+          accountId: _snapshot.accountId,
+          taskLists: _snapshot.taskLists,
+          tasks: <CachedTask>[
+            for (final task in _snapshot.tasks)
+              task.id == const TaskId(12)
+                  ? CachedTask(
+                      id: task.id,
+                      accountId: task.accountId,
+                      taskListId: task.taskListId,
+                      parentTaskId: task.parentTaskId,
+                      remoteId: task.remoteId,
+                      title: task.title,
+                      notes: task.notes,
+                      status: TaskStatus.completed,
+                      due: task.due,
+                    )
+                  : task,
+          ],
+          completeness: _snapshot.completeness,
+        ),
+      );
+      await _tapRowTitle(tester, 'Cached parent');
+      final child = find.byKey(const ValueKey<String>('subtask-12'));
+      await tester.ensureVisible(child);
+      await tester.pumpAndSettle();
+
+      await tester.drag(child, const Offset(140, 0));
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.applied, isEmpty);
+    });
+  });
 }
 
 const _taskMenuLabels = <String>[
@@ -2784,6 +3023,7 @@ Future<_ShellFixture> _pumpPhoneShell(
   PhoneViewport viewport, {
   DensityPreference density = DensityPreference.standard,
   Clock? clock,
+  CachedTasksSnapshot? snapshot,
 }) async {
   // Android status and navigation bars take room from the shell.
   tester.view
@@ -2801,6 +3041,7 @@ Future<_ShellFixture> _pumpPhoneShell(
     preferencesRepository: preferences,
     taskListsRepository: _TaskListsRepository(),
     clock: clock,
+    snapshot: snapshot,
   );
   addTearDown(fixture.dispose);
   await tester.pumpWidget(

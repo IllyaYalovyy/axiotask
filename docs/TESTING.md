@@ -931,6 +931,27 @@ the file-backed `test/data/database/completion_repository_test.dart` (restart,
 stale, expired, concurrent, rollback and idempotent receipts),
 `test/features/tasks/completion_undo_test.dart` and
 `test/sync/completion_sync_engine_test.dart`.
+Cases 02 (swipe to complete), 03 (swipe to schedule) and 32 (subtask swipe
+scheduling) are corrected by
+`integration_test/android_regression/touch_gestures_test.dart`. It drags the
+real shell's task rows and the parent's subtask rows by touch. A right swipe
+must store the swiped task completed in SQLite (with its open subtask, by the
+shared completion policy) and pending desired-state intent for exactly the
+changed tasks, offer a hit-testable Undo that restores them, and leave every
+other task unchanged. A left swipe must open quick scheduling naming the swiped
+task; Back and a tap outside cancel with no stored change or intent. Today,
+Tomorrow, Choose date and Clear date then write only that task, a subtask
+date never moves its sibling or a later-dated parent, and the existing due
+cascade and its Undo in details apply to a parent and to an earlier subtask.
+Short and flung-short swipes and a mostly vertical drag (which scrolls the
+list) change nothing. Host coverage is in
+`test/features/tasks/task_swipe_test.dart` (touch-only recognizer: distance,
+fling, return, pointer cancel, steep diagonal, vertical scroll, tap, long
+press, mouse drag-and-drop, disabled rows, and the sheet's choices and
+dismissal) and the phone swipe group of
+`test/features/tasks/adaptive_shell_test.dart` (exact task commands for list
+and subtask rows, selection mode, row tap and mouse reorder). Cases 34, 35 and
+the subtask touch-reorder finding share that test path and stay outstanding.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

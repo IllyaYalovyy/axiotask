@@ -9,6 +9,7 @@ import '../../../domain/policy/effective_due.dart';
 import '../../../domain/policy/subtask_progress.dart';
 import '../../../domain/policy/task_links.dart';
 import '../task_detail_view_model.dart';
+import 'task_swipe.dart';
 
 final class TaskDetailsPane extends StatelessWidget {
   const TaskDetailsPane({
@@ -662,69 +663,103 @@ final class SubtaskList extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     children: <Widget>[
       for (final (index, child) in children.indexed)
-        ListTile(
+        TaskSwipeActions(
           key: ValueKey<String>('subtask-${child.id.value}'),
-          contentPadding: EdgeInsets.zero,
-          leading: IconButton(
-            tooltip: child.status == TaskStatus.completed
-                ? 'Reopen ${child.title}'
-                : 'Complete ${child.title}',
-            onPressed: viewModel.state?.isCommandPending == true
-                ? null
-                : () => unawaited(viewModel.toggleCompletion(child.id)),
-            icon: Icon(
-              child.status == TaskStatus.completed
-                  ? Icons.check_circle
-                  : Icons.radio_button_unchecked,
-            ),
-          ),
-          title: Text(child.title),
-          subtitle: _subtaskSubtitle(child),
-          trailing: PopupMenuButton<_SubtaskAction>(
-            tooltip: 'Manage ${child.title}',
-            enabled: viewModel.state?.isCommandPending != true,
-            onSelected: (action) {
-              switch (action) {
-                case _SubtaskAction.edit:
-                  showTaskContentDialog(context, viewModel, child);
-                case _SubtaskAction.moveUp:
-                  unawaited(viewModel.moveChildUp(child.id));
-                case _SubtaskAction.moveDown:
-                  unawaited(viewModel.moveChildDown(child.id));
-                case _SubtaskAction.promote:
-                  unawaited(viewModel.promote(child.id));
-                case _SubtaskAction.delete:
-                  unawaited(viewModel.deleteTask(child.id));
-              }
-            },
-            itemBuilder: (_) => <PopupMenuEntry<_SubtaskAction>>[
-              const PopupMenuItem(
-                value: _SubtaskAction.edit,
-                child: Text('Edit subtask'),
-              ),
-              PopupMenuItem(
-                value: _SubtaskAction.moveUp,
-                enabled: index > 0,
-                child: const Text('Move subtask up'),
-              ),
-              PopupMenuItem(
-                value: _SubtaskAction.moveDown,
-                enabled: index < children.length - 1,
-                child: const Text('Move subtask down'),
-              ),
-              const PopupMenuItem(
-                value: _SubtaskAction.promote,
-                child: Text('Promote subtask'),
-              ),
-              const PopupMenuItem(
-                value: _SubtaskAction.delete,
-                child: Text('Delete subtask'),
-              ),
-            ],
-          ),
-          onTap: () => viewModel.select(child.id),
+          enabled: viewModel.state?.isCommandPending != true,
+          onComplete: child.status == TaskStatus.completed
+              ? null
+              : () => unawaited(viewModel.complete(child.id)),
+          onSchedule: () =>
+              unawaited(scheduleTaskFromSwipe(context, viewModel, child)),
+          child: _subtaskTile(context, index, child),
         ),
     ],
+  );
+
+  Widget _subtaskTile(BuildContext context, int index, CachedTask child) =>
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: IconButton(
+          tooltip: child.status == TaskStatus.completed
+              ? 'Reopen ${child.title}'
+              : 'Complete ${child.title}',
+          onPressed: viewModel.state?.isCommandPending == true
+              ? null
+              : () => unawaited(viewModel.toggleCompletion(child.id)),
+          icon: Icon(
+            child.status == TaskStatus.completed
+                ? Icons.check_circle
+                : Icons.radio_button_unchecked,
+          ),
+        ),
+        title: Text(child.title),
+        subtitle: _subtaskSubtitle(child),
+        trailing: PopupMenuButton<_SubtaskAction>(
+          tooltip: 'Manage ${child.title}',
+          enabled: viewModel.state?.isCommandPending != true,
+          onSelected: (action) {
+            switch (action) {
+              case _SubtaskAction.edit:
+                showTaskContentDialog(context, viewModel, child);
+              case _SubtaskAction.moveUp:
+                unawaited(viewModel.moveChildUp(child.id));
+              case _SubtaskAction.moveDown:
+                unawaited(viewModel.moveChildDown(child.id));
+              case _SubtaskAction.promote:
+                unawaited(viewModel.promote(child.id));
+              case _SubtaskAction.delete:
+                unawaited(viewModel.deleteTask(child.id));
+            }
+          },
+          itemBuilder: (_) => <PopupMenuEntry<_SubtaskAction>>[
+            const PopupMenuItem(
+              value: _SubtaskAction.edit,
+              child: Text('Edit subtask'),
+            ),
+            PopupMenuItem(
+              value: _SubtaskAction.moveUp,
+              enabled: index > 0,
+              child: const Text('Move subtask up'),
+            ),
+            PopupMenuItem(
+              value: _SubtaskAction.moveDown,
+              enabled: index < children.length - 1,
+              child: const Text('Move subtask down'),
+            ),
+            const PopupMenuItem(
+              value: _SubtaskAction.promote,
+              child: Text('Promote subtask'),
+            ),
+            const PopupMenuItem(
+              value: _SubtaskAction.delete,
+              child: Text('Delete subtask'),
+            ),
+          ],
+        ),
+        onTap: () => viewModel.select(child.id),
+      );
+}
+
+/// Opens quick scheduling for the swiped [task] and applies the choice to
+/// that task only, through the shared date shortcut and due-change commands
+/// (so the due cascade and its Undo behave as for every other date edit).
+/// Dismissing the sheet changes nothing.
+Future<void> scheduleTaskFromSwipe(
+  BuildContext context,
+  TaskDetailViewModel viewModel,
+  CachedTask task,
+) async {
+  final action = await showQuickDateSheet(context, taskTitle: task.title);
+  if (action == null) return;
+  if (action.shortcut case final shortcut?) {
+    await viewModel.setDueShortcut(task.id, shortcut);
+    return;
+  }
+  if (!context.mounted) return;
+  await showTaskDateDialog(
+    context,
+    viewModel,
+    viewModel.taskById(task.id) ?? task,
   );
 }
 
@@ -944,7 +979,7 @@ final class _TaskDateDialogState extends State<_TaskDateDialog> {
     }
     setState(() => _dateError = null);
     await widget.viewModel.setDue(widget.task.id, due);
-    if (mounted && widget.viewModel.state?.failureMessage == null) {
+    if (mounted && widget.viewModel.commandFailureMessage == null) {
       Navigator.of(context).pop();
     }
   }
@@ -961,21 +996,19 @@ final class _TaskDateDialogState extends State<_TaskDateDialog> {
           labelText: 'Due date (YYYY-MM-DD)',
           errorText: _dateError,
         ),
-        onSubmitted: widget.viewModel.state?.isCommandPending == true
+        onSubmitted: widget.viewModel.isCommandPending
             ? null
             : (_) => _submit(),
       ),
       actions: <Widget>[
         TextButton(
-          onPressed: widget.viewModel.state?.isCommandPending == true
+          onPressed: widget.viewModel.isCommandPending
               ? null
               : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: widget.viewModel.state?.isCommandPending == true
-              ? null
-              : _submit,
+          onPressed: widget.viewModel.isCommandPending ? null : _submit,
           child: const Text('Set date'),
         ),
       ],
