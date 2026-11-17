@@ -12,6 +12,7 @@ import '../../domain/repository/tasks_repository.dart';
 final class QuickAddState {
   const QuickAddState({
     required this.input,
+    required this.notes,
     required this.previewTitle,
     required this.previewDue,
     required this.hasParsedDate,
@@ -25,6 +26,9 @@ final class QuickAddState {
   });
 
   final String input;
+
+  /// Optional multiline notes stored with the captured task.
+  final String notes;
   final String previewTitle;
   final TaskDate? previewDue;
   final bool hasParsedDate;
@@ -63,6 +67,7 @@ final class QuickAddViewModel extends ChangeNotifier {
   final Future<void> Function(TaskListId target, TaskDate? due)? created;
 
   String _input = '';
+  String _notes = '';
   String? _dismissedInput;
   TaskListId? _selectedTarget;
   TaskDate? _selectedDue;
@@ -80,6 +85,27 @@ final class QuickAddViewModel extends ChangeNotifier {
   void setInput(String value) {
     _input = value;
     if (_dismissedInput != value) _dismissedInput = null;
+    _failureMessage = null;
+    _successMessage = null;
+    _replaceState();
+  }
+
+  void setNotes(String value) {
+    _notes = value;
+    _failureMessage = null;
+    _successMessage = null;
+    _replaceState();
+  }
+
+  /// Discards the unsubmitted draft (title, notes and per-capture choices).
+  /// A capture in flight keeps its draft until it completes.
+  void clearDraft() {
+    if (_isSubmitting) return;
+    _input = '';
+    _notes = '';
+    _dismissedInput = null;
+    _selectedDue = null;
+    _hasSelectedDue = false;
     _failureMessage = null;
     _successMessage = null;
     _replaceState();
@@ -136,6 +162,7 @@ final class QuickAddViewModel extends ChangeNotifier {
       _replaceState();
       return;
     }
+    final notes = _notes.trim().isEmpty ? null : _notes;
     _isSubmitting = true;
     _failureMessage = null;
     _successMessage = null;
@@ -146,6 +173,7 @@ final class QuickAddViewModel extends ChangeNotifier {
           accountId: accountId,
           taskListId: target.id,
           title: title,
+          notes: notes,
           due: due,
         ),
       );
@@ -154,12 +182,20 @@ final class QuickAddViewModel extends ChangeNotifier {
           await localEditCommitted?.call();
           await created?.call(target.id, due);
           _input = '';
+          _notes = '';
           _dismissedInput = null;
           _selectedDue = null;
           _hasSelectedDue = false;
           _successMessage = 'Saved locally. Waiting for Google.';
-        case Failed<TaskId>():
-          _failureMessage = 'The task could not be saved safely.';
+        case Failed<TaskId>(:final failure):
+          // The draft (title and notes) is kept so the user can retry.
+          _failureMessage = switch (failure.code) {
+            'task.title_too_long' =>
+              'Task titles can contain at most 1024 characters.',
+            'task.notes_too_long' =>
+              'Task notes can contain at most 8192 characters.',
+            _ => 'The task could not be saved safely.',
+          };
       }
     } finally {
       _isSubmitting = false;
@@ -194,6 +230,7 @@ final class QuickAddViewModel extends ChangeNotifier {
     final target = _resolvedTarget(availableLists);
     _state = QuickAddState(
       input: _input,
+      notes: _notes,
       previewTitle: useParsed ? parsed.title : _input.trim(),
       previewDue: _resolvedDue(parsed, useParsed),
       hasParsedDate: useParsed,

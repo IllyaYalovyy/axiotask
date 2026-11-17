@@ -85,4 +85,30 @@ void main() {
 
     expect(route.taskIds, <TaskId>{const TaskId(1)});
   });
+
+  test('the phone composer is one back-aware route over the collection', () {
+    final navigation = AppNavigationController();
+    addTearDown(navigation.dispose);
+
+    expect(navigation.state.composerOpen, isFalse);
+    navigation.openComposer();
+    navigation.openComposer();
+
+    expect(navigation.state.routes, <AppRoute>[
+      const CollectionRoute(),
+      const ComposerRoute(),
+    ]);
+    expect(navigation.state.composerOpen, isTrue);
+    expect(navigation.state.canHandlePredictiveBack, isTrue);
+    expect(navigation.back(), const ComposerRoute());
+    expect(navigation.state.composerOpen, isFalse);
+
+    navigation.openComposer();
+    navigation.openTaskDetail(const TaskId(3));
+    navigation.closeComposer();
+    expect(navigation.state.routes, <AppRoute>[
+      const CollectionRoute(),
+      const TaskDetailRoute(TaskId(3)),
+    ]);
+  });
 }

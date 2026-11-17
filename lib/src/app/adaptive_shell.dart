@@ -84,6 +84,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
   );
   TaskId? _focusedTaskId;
   bool _openedInitialBulkAdd = false;
+
+  /// Whether the visible collection captures through the phone's floating
+  /// add button and on-demand composer instead of the desktop quick-add bar.
+  bool _phoneComposerMode = false;
+  bool _backLoweredKeyboard = false;
   bool _suppressNavigationSync = false;
   DesktopTaskDragPayload? _dragPayload;
   _DesktopDropPreview? _dropPreview;
@@ -107,7 +112,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     if (widget.initialQuickAddInput case final input?) {
       _quickAdd.setInput(input);
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _quickAddFocus.requestFocus();
+        if (mounted) _beginQuickAdd();
       });
     }
     widget.viewModel.addListener(_viewModelChanged);
@@ -145,7 +150,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       if (widget.initialQuickAddInput case final input?) {
         _quickAdd.setInput(input);
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) _quickAddFocus.requestFocus();
+          if (mounted) _beginQuickAdd();
         });
       }
       widget.viewModel.addListener(_viewModelChanged);
@@ -325,8 +330,86 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     _suppressNavigationSync = false;
   }
 
+  /// Starts a capture: on phones by opening the composer, on desktop by
+  /// focusing the always-visible quick-add bar.
+  void _beginQuickAdd() {
+    if (!_phoneComposerMode) {
+      _quickAddFocus.requestFocus();
+      return;
+    }
+    // The phone composer belongs to the task collection. Over a detail,
+    // search or the drawer it would sit invisibly on the route stack and
+    // swallow the next Back, so the shortcut does nothing there.
+    if (!_collectionVisible) return;
+    _openComposer();
+  }
+
+  bool get _collectionVisible =>
+      widget.viewModel.state.selectedTaskId == null &&
+      !_navigation.state.routes.any(
+        (route) =>
+            route is TaskDetailRoute ||
+            route is SearchRoute ||
+            route is DrawerRoute,
+      );
+
+  void _openComposer() {
+    if (!_navigation.state.composerOpen) _navigation.openComposer();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _navigation.state.composerOpen) {
+        _quickAddFocus.requestFocus();
+      }
+    });
+  }
+
+  /// Cancel discards the unsubmitted draft and closes the composer without
+  /// creating a task.
+  void _cancelComposer() {
+    _quickAdd.clearDraft();
+    _closeComposer();
+  }
+
+  /// Closes the composer and its keyboard, keeping any draft for the next
+  /// open.
+  void _closeComposer() {
+    _dismissKeyboard();
+    _navigation.closeComposer();
+  }
+
+  void _dismissKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    unawaited(SystemChannels.textInput.invokeMethod<void>('TextInput.hide'));
+  }
+
+  /// Back on the open composer first lowers a raised keyboard, then folds
+  /// the composer away. (On Android the keyboard usually consumes the first
+  /// Back itself, so the app's first Back then closes the composer.)
+  bool _backLowersComposerKeyboard() =>
+      _navigation.currentRoute is ComposerRoute &&
+      _editingText &&
+      MediaQuery.viewInsetsOf(context).bottom > 0;
+
   void _handleBack() {
+    // One system Back reaches this handler twice (the shell's PopScope and
+    // the surface navigator's page removal). A Back that only lowered the
+    // keyboard must not also close the composer.
+    if (_backLoweredKeyboard) return;
+    if (_backLowersComposerKeyboard()) {
+      _dismissKeyboard();
+      _backLoweredKeyboard = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // Rebuild so the surface navigator restores the composer's page.
+        setState(() => _backLoweredKeyboard = false);
+      });
+      WidgetsBinding.instance.scheduleFrame();
+      return;
+    }
     final route = _navigation.currentRoute;
+    if (route is ComposerRoute) {
+      _closeComposer();
+      return;
+    }
     _suppressNavigationSync = true;
     _navigation.back();
     if (route is TaskDetailRoute) {
@@ -419,7 +502,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       case DesktopShortcutAction.search:
         _navigation.openSearch();
       case DesktopShortcutAction.quickAdd:
-        _quickAddFocus.requestFocus();
+        _beginQuickAdd();
       case DesktopShortcutAction.bulkCapture:
         unawaited(_showBulkAdd());
       case DesktopShortcutAction.focusNavigation:
@@ -561,6 +644,22 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
 
   @override
   Widget build(BuildContext context) {
+    // The body is wide (desktop workspace) from 1024 logical pixels inside
+    // the safe area; narrower touch layouts capture through the phone
+    // composer.
+    final padding = MediaQuery.paddingOf(context);
+    final bodyWidth = MediaQuery.sizeOf(context).width - padding.horizontal;
+    _updatePhoneComposerMode(
+      bodyWidth < 1024 &&
+          _touchCapturePlatforms.contains(Theme.of(context).platform),
+    );
+    final keyboardVisible = MediaQuery.viewInsetsOf(context).bottom > 0;
+    // While composing above a raised keyboard, the app header yields its
+    // height to the composer so cancel and submit stay on screen.
+    final composingAboveKeyboard =
+        _phoneComposerMode &&
+        keyboardVisible &&
+        _navigation.currentRoute is ComposerRoute;
     return PopScope<Object?>(
       canPop: !_navigation.state.canHandlePredictiveBack,
       onPopInvokedWithResult: (didPop, _) {
@@ -579,34 +678,35 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                   controller: _navigation,
                   child: Column(
                     children: <Widget>[
-                      _ApplicationHeader(
-                        health: state.health,
-                        onHealthAction: state.isSyncControlPending
-                            ? null
-                            : widget.onHealthAction ??
-                                  (action) => unawaited(
-                                    widget.viewModel.handleSyncHealthAction(
-                                      action,
+                      if (!composingAboveKeyboard)
+                        _ApplicationHeader(
+                          health: state.health,
+                          onHealthAction: state.isSyncControlPending
+                              ? null
+                              : widget.onHealthAction ??
+                                    (action) => unawaited(
+                                      widget.viewModel.handleSyncHealthAction(
+                                        action,
+                                      ),
                                     ),
-                                  ),
-                        isRefreshing: state.isRefreshing,
-                        isSyncControlPending: state.isSyncControlPending,
-                        onRefresh: widget.viewModel.refreshRequested == null
-                            ? null
-                            : widget.viewModel.refresh,
-                        onStopSync: widget.viewModel.stopSync,
-                        onSearch: _navigation.openSearch,
-                        onShowShortcuts: _showShortcutReference,
-                        showSearch:
-                            state.selectedTaskId == null &&
-                            state.tasks.isNotEmpty,
-                        onOpenNavigation: _navigation.openDrawer,
-                        diagnosticsBuilder: widget.diagnosticsBuilder,
-                        accountBackupBuilder: widget.accountBackupBuilder,
-                        localDataRecoveryBuilder:
-                            widget.localDataRecoveryBuilder,
-                        settingsBuilder: widget.settingsBuilder,
-                      ),
+                          isRefreshing: state.isRefreshing,
+                          isSyncControlPending: state.isSyncControlPending,
+                          onRefresh: widget.viewModel.refreshRequested == null
+                              ? null
+                              : widget.viewModel.refresh,
+                          onStopSync: widget.viewModel.stopSync,
+                          onSearch: _navigation.openSearch,
+                          onShowShortcuts: _showShortcutReference,
+                          showSearch:
+                              state.selectedTaskId == null &&
+                              state.tasks.isNotEmpty,
+                          onOpenNavigation: _navigation.openDrawer,
+                          diagnosticsBuilder: widget.diagnosticsBuilder,
+                          accountBackupBuilder: widget.accountBackupBuilder,
+                          localDataRecoveryBuilder:
+                              widget.localDataRecoveryBuilder,
+                          settingsBuilder: widget.settingsBuilder,
+                        ),
                       if (state.syncControlFailureMessage case final message?)
                         MaterialBanner(
                           content: Text(message),
@@ -724,7 +824,11 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                                 onSelected: _handleBack,
                               ),
                               CollectionRoute() ||
-                              TaskDetailRoute() => _shellBody(state, wide),
+                              TaskDetailRoute() => _shellBody(
+                                state,
+                                wide,
+                                keyboardVisible: keyboardVisible,
+                              ),
                               _ => throw StateError('unsupported_visual_route'),
                             };
                             return NavigatorPopHandler<Object?>(
@@ -762,11 +866,33 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     );
   }
 
-  Widget _shellBody(TasksViewState state, bool wide) => _ShellBody(
+  void _updatePhoneComposerMode(bool phone) {
+    _phoneComposerMode = phone;
+    if (phone || !_navigation.state.composerOpen) return;
+    // The layout left the phone composer (for example a resized tablet
+    // window): fold it away, keeping the draft for the quick-add bar.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_phoneComposerMode) _navigation.closeComposer();
+    });
+  }
+
+  Widget _shellBody(
+    TasksViewState state,
+    bool wide, {
+    required bool keyboardVisible,
+  }) => _ShellBody(
     state: state,
     viewModel: widget.viewModel,
     quickAdd: _quickAdd,
     quickAddFocus: _quickAddFocus,
+    phoneCapture: _phoneComposerMode && !wide
+        ? _PhoneCapture(
+            composerOpen: _navigation.state.composerOpen,
+            keyboardVisible: keyboardVisible,
+            onOpen: _openComposer,
+            onCancel: _cancelComposer,
+          )
+        : null,
     openBulkAdd: () => _showBulkAdd(),
     openTask: _openTask,
     onTaskFocused: (taskId) => _focusedTaskId = taskId,
@@ -1032,6 +1158,7 @@ final class _ShellBody extends StatelessWidget {
     required this.viewModel,
     required this.quickAdd,
     required this.quickAddFocus,
+    required this.phoneCapture,
     required this.wide,
     required this.openBulkAdd,
     required this.openTask,
@@ -1055,6 +1182,9 @@ final class _ShellBody extends StatelessWidget {
   final TasksViewModel viewModel;
   final QuickAddViewModel quickAdd;
   final FocusNode quickAddFocus;
+
+  /// Present only for the phone layout; the desktop keeps its quick-add bar.
+  final _PhoneCapture? phoneCapture;
   final bool wide;
   final VoidCallback openBulkAdd;
   final ValueChanged<TaskId> openTask;
@@ -1094,6 +1224,7 @@ final class _ShellBody extends StatelessWidget {
                   viewModel: viewModel,
                   quickAdd: quickAdd,
                   quickAddFocus: quickAddFocus,
+                  phoneCapture: phoneCapture,
                   openBulkAdd: openBulkAdd,
                   onTaskFocused: onTaskFocused,
                   onTaskAction: onTaskAction,
@@ -1364,13 +1495,45 @@ final class _DesktopWorkspaceSplitter extends StatelessWidget {
   );
 }
 
-enum _CollectionSlot { selection, header, divider, rows }
+enum _CollectionSlot { selection, composer, header, divider, rows }
+
+/// Platforms whose phone layout captures through the floating add button
+/// and on-demand composer. Desktop platforms keep the quick-add bar.
+const _touchCapturePlatforms = <TargetPlatform>{
+  TargetPlatform.android,
+  TargetPlatform.iOS,
+  TargetPlatform.fuchsia,
+};
+
+/// The phone layout's capture state, passed from the shell to the
+/// collection.
+final class _PhoneCapture {
+  const _PhoneCapture({
+    required this.composerOpen,
+    required this.keyboardVisible,
+    required this.onOpen,
+    required this.onCancel,
+  });
+
+  /// Margin of the floating add button from the collection's edges.
+  static const double buttonMargin = 16;
+
+  /// Bottom room the task list keeps so its last row is never under the
+  /// 56 dp add button.
+  static const double buttonClearance = 56 + buttonMargin * 2;
+
+  final bool composerOpen;
+  final bool keyboardVisible;
+  final VoidCallback onOpen;
+  final VoidCallback onCancel;
+}
 
 /// Stacks the collection vertically: the pinned selection toolbar (when
-/// present) at its natural height, the scrolling header within what remains
-/// of the top half, a divider, and the task rows in all remaining height.
-/// The rows therefore keep at least half of the height, while the toolbar
-/// stays whole even when feedback banners leave the collection very short.
+/// present) at its natural height, the open phone composer (when present),
+/// the scrolling header within what remains of the top half, a divider, and
+/// the task rows in all remaining height. Without a composer the rows
+/// therefore keep at least half of the height, while the toolbar stays whole
+/// even when feedback banners leave the collection very short.
 final class _CollectionLayoutDelegate extends MultiChildLayoutDelegate {
   @override
   void performLayout(Size size) {
@@ -1384,6 +1547,16 @@ final class _CollectionLayoutDelegate extends MultiChildLayoutDelegate {
     if (hasChild(_CollectionSlot.selection)) {
       top = layoutChild(_CollectionSlot.selection, upTo(size.height)).height;
       positionChild(_CollectionSlot.selection, Offset.zero);
+    }
+    // The open phone composer keeps its natural height up to all that
+    // remains; its own details scroll when the keyboard leaves little room.
+    if (hasChild(_CollectionSlot.composer)) {
+      final composer = layoutChild(
+        _CollectionSlot.composer,
+        upTo(size.height - top),
+      );
+      positionChild(_CollectionSlot.composer, Offset(0, top));
+      top += composer.height;
     }
     final header = layoutChild(
       _CollectionSlot.header,
@@ -2459,6 +2632,7 @@ final class _TaskCollection extends StatefulWidget {
     required this.onTaskFocused,
     required this.onTaskAction,
     required this.dropPreview,
+    this.phoneCapture,
     required this.onDragStarted,
     required this.onDragPreview,
     required this.onDragCanceled,
@@ -2471,6 +2645,7 @@ final class _TaskCollection extends StatefulWidget {
   final TasksViewModel viewModel;
   final QuickAddViewModel quickAdd;
   final FocusNode quickAddFocus;
+  final _PhoneCapture? phoneCapture;
   final VoidCallback openBulkAdd;
   final ValueChanged<TaskId> onTaskFocused;
   final void Function(DesktopTaskAction action, [TaskId? taskId]) onTaskAction;
@@ -2564,6 +2739,31 @@ final class _TaskCollectionState extends State<_TaskCollection> {
               clearSelection.skippedParentTaskIds.length;
     _ensureFocusNodes(tasks.length);
     final narrow = MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
+    final phoneCapture = widget.phoneCapture;
+    // The add button leaves while it would obstruct: an open composer, a
+    // raised keyboard or selection mode.
+    final showAddButton =
+        phoneCapture != null &&
+        !phoneCapture.composerOpen &&
+        !phoneCapture.keyboardVisible &&
+        !state.isBulkSelectionActive;
+    // The rows keep at least half the collection's height. The button floats
+    // over their bottom-right corner only where a whole row still fits above
+    // it; on shorter layouts (a phone in landscape at large text) it docks in
+    // the header instead, so it never hides a row's controls.
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    bool floatsAddButton(double collectionHeight) =>
+        collectionHeight / 2 - 1 >=
+        _PhoneCapture.buttonClearance + rowMetrics.minimumHeight * textScale;
+    Widget addButton({required bool docked}) => FloatingActionButton(
+      key: const Key('phone-add-task'),
+      heroTag: null,
+      tooltip: 'New task',
+      elevation: docked ? 0 : null,
+      materialTapTargetSize: MaterialTapTargetSize.padded,
+      onPressed: phoneCapture!.onOpen,
+      child: const Icon(Icons.add),
+    );
     // The selection toolbar sits beside the title only when every labelled
     // control fits there. Otherwise (phones, large text) it spans the
     // collection above the title, outside the scrolling header, so no
@@ -2575,73 +2775,91 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                 _BulkActionBar.labeledWidth(context, state) +
                     8 +
                     _minimumHeaderTitleWidth);
-    Widget header({required bool selectionPinned}) => Padding(
-      key: const Key('collection-header'),
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-      child: Builder(
-        builder: (context) {
-          final title = Text(
-            switch (state.selectedView) {
-              SmartTaskView(:final smartView) => smartView.title,
-              TaskListView() => state.selectedTaskList?.title ?? 'Tasks',
-            },
-            maxLines: narrow ? 2 : 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleLarge
-                ?.copyWith(fontWeight: FontWeight.w700),
-          );
-          final commands = state.isBulkSelectionActive
-              ? _BulkActionBar(state: state, viewModel: viewModel)
-              : _NormalCollectionCommandBar(
-                  state: state,
-                  viewModel: viewModel,
-                  tasks: tasks,
-                  clearCompletedCount: clearCompletedCount,
-                  openBulkAdd: openBulkAdd,
-                );
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              if (selectionPinned)
-                title
-              else if (narrow) ...<Widget>[
-                title,
-                const SizedBox(height: 4),
-                Align(alignment: Alignment.centerLeft, child: commands),
-              ] else
-                Row(
-                  children: <Widget>[
-                    Expanded(child: title),
-                    const SizedBox(width: 8),
-                    commands,
+    Widget header({required bool selectionPinned, required bool dockAdd}) =>
+        Padding(
+          key: const Key('collection-header'),
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+          child: Builder(
+            builder: (context) {
+              final titleText = Text(
+                switch (state.selectedView) {
+                  SmartTaskView(:final smartView) => smartView.title,
+                  TaskListView() => state.selectedTaskList?.title ?? 'Tasks',
+                },
+                maxLines: narrow ? 2 : 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700),
+              );
+              final commands = state.isBulkSelectionActive
+                  ? _BulkActionBar(state: state, viewModel: viewModel)
+                  : _NormalCollectionCommandBar(
+                      state: state,
+                      viewModel: viewModel,
+                      tasks: tasks,
+                      clearCompletedCount: clearCompletedCount,
+                      openBulkAdd: openBulkAdd,
+                    );
+              // Docked, the add button leads the header beside the title, so
+              // the header's own scrolling never clips it.
+              final Widget title = dockAdd
+                  ? Row(
+                      children: <Widget>[
+                        Expanded(child: titleText),
+                        const SizedBox(width: 8),
+                        addButton(docked: true),
+                      ],
+                    )
+                  : titleText;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (selectionPinned)
+                    title
+                  else if (narrow) ...<Widget>[
+                    title,
+                    const SizedBox(height: 4),
+                    Align(alignment: Alignment.centerLeft, child: commands),
+                  ] else
+                    Row(
+                      children: <Widget>[
+                        Expanded(child: title),
+                        const SizedBox(width: 8),
+                        commands,
+                      ],
+                    ),
+                  if (phoneCapture == null) ...<Widget>[
+                    const SizedBox(height: 2),
+                    QuickAddBar(
+                      viewModel: quickAdd,
+                      lists: state.orderedTaskLists,
+                      focusNode: quickAddFocus,
+                      onPasteMultiple: openBulkAdd,
+                    ),
                   ],
-                ),
-              const SizedBox(height: 2),
-              QuickAddBar(
-                viewModel: quickAdd,
-                lists: state.orderedTaskLists,
-                focusNode: quickAddFocus,
-                onPasteMultiple: openBulkAdd,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _collectionCountLabel(state.health, tasks.length),
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          );
-        },
-      ),
-    );
+                  const SizedBox(height: 4),
+                  Text(
+                    _collectionCountLabel(state.health, tasks.length),
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        );
     // On short viewports (phone landscape, large text) the header scrolls
     // within what the top half of the height leaves, so task rows and their
     // controls always keep room to be seen and tapped.
-    final content = LayoutBuilder(
+    final feedback = state.transientFeedback;
+    return LayoutBuilder(
       builder: (context, constraints) {
         final selectionPinned = pinsSelection(constraints.maxWidth - 32);
-        return CustomMultiChildLayout(
+        final floatingAdd =
+            showAddButton && floatsAddButton(constraints.maxHeight);
+        final dockAdd = showAddButton && !floatingAdd;
+        final content = CustomMultiChildLayout(
           delegate: _CollectionLayoutDelegate(),
           children: <Widget>[
             if (selectionPinned)
@@ -2652,12 +2870,29 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                   child: _BulkActionBar(state: state, viewModel: viewModel),
                 ),
               ),
+            if (phoneCapture case _PhoneCapture(
+              composerOpen: true,
+              :final onCancel,
+            ))
+              LayoutId(
+                id: _CollectionSlot.composer,
+                child: PhoneComposerPanel(
+                  viewModel: quickAdd,
+                  lists: state.orderedTaskLists,
+                  focusNode: quickAddFocus,
+                  onCancel: onCancel,
+                  onPasteMultiple: openBulkAdd,
+                ),
+              ),
             LayoutId(
               id: _CollectionSlot.header,
               child: SingleChildScrollView(
                 key: const Key('collection-header-scroll'),
                 primary: false,
-                child: header(selectionPinned: selectionPinned),
+                child: header(
+                  selectionPinned: selectionPinned,
+                  dockAdd: dockAdd,
+                ),
               ),
             ),
             LayoutId(
@@ -2675,8 +2910,12 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                     ListView.separated(
                       key: const Key('desktop-task-scroll'),
                       controller: _scrollController,
-                      padding: EdgeInsets.symmetric(
-                        vertical: rowMetrics.listInset,
+                      padding: EdgeInsets.only(
+                        top: rowMetrics.listInset,
+                        // The last row scrolls clear of the add button.
+                        bottom:
+                            rowMetrics.listInset +
+                            (floatingAdd ? _PhoneCapture.buttonClearance : 0),
                       ),
                       itemCount: tasks.length,
                       separatorBuilder: (_, _) =>
@@ -2762,23 +3001,28 @@ final class _TaskCollectionState extends State<_TaskCollection> {
             ),
           ],
         );
+        if (feedback == null && !floatingAdd) return content;
+        return Stack(
+          children: <Widget>[
+            content,
+            if (feedback != null)
+              Positioned(
+                top: 20,
+                left: 24,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 300),
+                  child: _TransientTaskFeedbackSlot(feedback: feedback),
+                ),
+              ),
+            if (floatingAdd)
+              Positioned(
+                right: _PhoneCapture.buttonMargin,
+                bottom: _PhoneCapture.buttonMargin,
+                child: addButton(docked: false),
+              ),
+          ],
+        );
       },
-    );
-    final feedback = state.transientFeedback;
-    if (feedback == null) return content;
-
-    return Stack(
-      children: <Widget>[
-        content,
-        Positioned(
-          top: 20,
-          left: 24,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 300),
-            child: _TransientTaskFeedbackSlot(feedback: feedback),
-          ),
-        ),
-      ],
     );
   }
 }

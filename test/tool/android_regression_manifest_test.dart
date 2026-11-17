@@ -52,6 +52,8 @@ const _correctedAuditFailures = <String, String>{
   '03_swipe_schedule': 'android-touch-gestures',
   '05_completion_undo': 'android-completion-semantics',
   '06_long_press_selection': 'android-selection-toolbar',
+  '08_capture_notes': 'android-capture-composer',
+  '20_phone_add_affordance': 'android-capture-composer',
   '22_touch_target_size': 'android-task-row-actions',
   '32_subtask_swipe_schedule': 'android-touch-gestures',
   '33_parent_completion_cascade': 'android-completion-semantics',

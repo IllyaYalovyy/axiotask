@@ -32,8 +32,9 @@ void main() {
     expect((await f.task(f.second)).status, TaskStatus.needsAction);
   });
 
-  regressionCase('07_quick_capture_twice', (t, f) async {
+  regressionCase('07_quick_capture_twice', phoneOnHost: true, (t, f) async {
     const titles = <String>['Captured first', 'Captured second'];
+    await _openPhoneComposer(t);
     for (final title in titles) {
       await t.enterText(find.byKey(const Key('quick-add-input')), title);
       await t.pump();
@@ -50,6 +51,9 @@ void main() {
     expect(captured.map((task) => task.title), unorderedEquals(titles));
     expect(captured.map((task) => task.taskListId).toSet(), {f.list});
     expect(captured.map((task) => task.id).toSet(), hasLength(2));
+    // The composer stays open, empty and ready for a third capture.
+    expect(find.byKey(const Key('composer-surface')), findsOneWidget);
+    expect(find.text('Captured second'), findsOneWidget, reason: 'Listed');
   });
 
   regressionCase('10_edit_save_persists', (t, f) async {
@@ -215,44 +219,55 @@ void main() {
     expect(f.model.state.taskCommandFailureMessage, isNull);
   });
 
-  regressionCase('26_large_text_layout', label: CaseLabel.limitedPass, (
-    t,
-    f,
-  ) async {
-    t.platformDispatcher.textScaleFactorTestValue = 2;
-    await t.pumpAndSettle();
-    await f.capture(t, 'large_text');
-    expect(t.takeException(), isNull);
-    expect(
-      find.byKey(const Key('quick-add-submit')).hitTestable(),
-      findsOneWidget,
-    );
-  });
-
-  regressionCase('27_landscape_capture', label: CaseLabel.limitedPass, (
-    t,
-    f,
-  ) async {
-    if (Platform.isAndroid) {
-      await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
-        DeviceOrientation.landscapeLeft,
-      ]);
-      await settleUntil(
-        t,
-        () => t.view.physicalSize.width > t.view.physicalSize.height,
-        description: 'landscape orientation',
-      );
-    } else {
-      t.view.physicalSize = const Size(900, 412);
+  regressionCase(
+    '26_large_text_layout',
+    label: CaseLabel.limitedPass,
+    phoneOnHost: true,
+    (t, f) async {
+      t.platformDispatcher.textScaleFactorTestValue = 2;
       await t.pumpAndSettle();
-    }
-    await f.capture(t, 'landscape');
-    expect(t.takeException(), isNull);
-    expect(
-      find.byKey(const Key('quick-add-input')).hitTestable(),
-      findsOneWidget,
-    );
-  });
+      await _openPhoneComposer(t);
+      await f.capture(t, 'large_text');
+      expect(t.takeException(), isNull);
+      expect(
+        find.byKey(const Key('quick-add-submit')).hitTestable(),
+        findsOneWidget,
+      );
+    },
+  );
+
+  regressionCase(
+    '27_landscape_capture',
+    label: CaseLabel.limitedPass,
+    phoneOnHost: true,
+    (t, f) async {
+      // Rotated with the composer open: it stays open and usable.
+      await _openPhoneComposer(t);
+      if (Platform.isAndroid) {
+        await SystemChrome.setPreferredOrientations(<DeviceOrientation>[
+          DeviceOrientation.landscapeLeft,
+        ]);
+        await settleUntil(
+          t,
+          () => t.view.physicalSize.width > t.view.physicalSize.height,
+          description: 'landscape orientation',
+        );
+      } else {
+        t.view.physicalSize = const Size(900, 412);
+        await t.pumpAndSettle();
+      }
+      await f.capture(t, 'landscape');
+      expect(t.takeException(), isNull);
+      expect(
+        find.byKey(const Key('quick-add-input')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('quick-add-submit')).hitTestable(),
+        findsOneWidget,
+      );
+    },
+  );
 
   regressionCase('28_create_list', (t, f) async {
     await t.tap(find.byKey(const Key('collection-actions-menu')));
@@ -404,6 +419,15 @@ void main() {
     expect(topLevelOrder(), <TaskId>[f.second, f.parent]);
     expect((await f.task(f.child)).parentTaskId, f.parent);
   });
+}
+
+/// Opens the phone composer with its floating add button.
+Future<void> _openPhoneComposer(WidgetTester t) async {
+  final button = find.byKey(const Key('phone-add-task'));
+  expect(button.hitTestable(), findsOneWidget);
+  await t.tap(button);
+  await t.pumpAndSettle();
+  expect(find.byKey(const Key('composer-surface')), findsOneWidget);
 }
 
 Finder _textFieldLabelled(String label) => find.byWidgetPredicate(

@@ -39,6 +39,18 @@ final class SearchRoute extends AppRoute {
   int get hashCode => 3;
 }
 
+/// The phone's on-demand capture composer, layered over the collection so
+/// system Back folds it away before leaving any other surface.
+final class ComposerRoute extends AppRoute {
+  const ComposerRoute();
+
+  @override
+  bool operator ==(Object other) => other is ComposerRoute;
+
+  @override
+  int get hashCode => 4;
+}
+
 final class TaskDetailRoute extends AppRoute {
   const TaskDetailRoute(this.taskId);
 
@@ -99,6 +111,7 @@ final class AppNavigationState {
   AppRoute? get predictiveBackRoute =>
       canHandlePredictiveBack ? routes.last : null;
   bool get drawerOpen => routes.any((route) => route is DrawerRoute);
+  bool get composerOpen => routes.any((route) => route is ComposerRoute);
   Set<TaskId> get selectedTaskIds =>
       routes.whereType<TaskSelectionRoute>().lastOrNull?.taskIds ??
       const <TaskId>{};
@@ -117,6 +130,8 @@ final class AppNavigationController extends ChangeNotifier {
   void openDrawer() => _pushUnique(const DrawerRoute());
   void closeDrawer() => _removeWhere((route) => route is DrawerRoute);
   void openSearch() => _pushUnique(const SearchRoute());
+  void openComposer() => _pushUnique(const ComposerRoute());
+  void closeComposer() => _removeWhere((route) => route is ComposerRoute);
 
   void openTaskDetail(TaskId taskId) {
     final routes = _without((route) => route is TaskDetailRoute);

@@ -99,6 +99,25 @@ the capture reports that Google confirmation is pending and returns keyboard
 focus to the title field. `Ctrl+N` and `Ctrl+Shift+V` remain discoverable
 accelerators for the visible capture and paste routes.
 
+Phones (Android touch layouts narrower than the desktop workspace) restore the
+v1.5.3 creation affordance instead of an always-visible bar. A floating New
+task button sits at the collection's bottom-right; the task list keeps room to
+scroll its last row clear of it, and where a phone in landscape at large text
+leaves too little height for a row above it, the same button docks beside the
+collection title so it never covers a row's controls. It leaves while the
+composer is open, a keyboard is up or selection mode is active. Tapping it
+opens a composer pinned at the top of the collection with focus in the title.
+Cancel and Add sit on the title row, which never scrolls; optional multiline
+notes, destination, due date and Paste multiple scroll below it, and the app
+header steps aside while the composer is open above the keyboard, so both
+actions stay on screen. Keyboard submit or Add stores the title and notes
+through the shared create command in the selected list, clears the fields and
+keeps the composer open and focused for the next capture; a rejected or failed
+capture keeps the title and notes. System Back first lowers a raised keyboard,
+then closes the composer and keeps its draft for the next open. Cancel
+discards the draft. Neither creates a task. Desktop keeps the quick-capture
+bar described above.
+
 In a Google-list collection using manual order, pointer drag shows an overlay
 row plus a before/after insertion marker without moving the canonical rows until
 the shared structure command commits. Dropping on another Google list uses the

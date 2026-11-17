@@ -952,6 +952,26 @@ dismissal) and the phone swipe group of
 `test/features/tasks/adaptive_shell_test.dart` (exact task commands for list
 and subtask rows, selection mode, row tap and mouse reorder). Cases 34, 35 and
 the subtask touch-reorder finding share that test path and stay outstanding.
+Cases 08 (notes during capture) and 20 (phone add button and composer) are
+corrected by `integration_test/android_regression/capture_test.dart`. Case 20
+requires a measured 48 dp floating add button in the bottom-right quarter and
+no always-visible capture bar. Tapping it must open the top composer with the
+title focused. With a simulated keyboard (which, as on Android, zeroes the
+bottom system padding), the first Back must lower the keyboard and keep the
+composer, and the second must close it; Cancel discards the draft. Neither may
+store a task in SQLite. Cancel and Add must keep 48 dp hit regions above the
+keyboard at 360 and 443 widths, portrait and landscape, 1x and 2x text. Case 08
+captures into the destination list: an empty title is rejected and keeps the
+notes, a keyboard submit stores title and multiline notes, and a second
+capture survives rotation at 2x text. A double tap stores exactly one more
+task. SQLite must then hold exactly those two tasks with their notes. Baseline
+cases 07, 26 and 27 now open the phone composer from the add button first, and
+27 rotates with it open. Host coverage is in the phone capture composer group
+of `test/features/tasks/adaptive_shell_test.dart` (320 to 443 widths, add
+button versus row controls, keyboard submit, repeated add, empty title,
+storage failure and retry, Back order, Cancel, rotation, selection mode, and
+the desktop bar kept on Linux and wide Android) and the notes tests in
+`test/features/tasks/quick_add_view_model_test.dart`.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

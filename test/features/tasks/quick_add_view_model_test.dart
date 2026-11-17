@@ -160,6 +160,151 @@ void main() {
     expect(model.state.input, 'Retain me today');
     expect(model.state.failureMessage, 'The task could not be saved safely.');
   });
+
+  group('capture notes (Android audit 08)', () {
+    QuickAddViewModel notesModel(_Repository repository) => QuickAddViewModel(
+      accountId: const AccountId(1),
+      repository: repository,
+      today: () => TaskDate(2026, 8, 16),
+      lists: () => _lists,
+      defaultTarget: () => const TaskListId(7),
+    );
+
+    test('multiline notes are stored with the title, then cleared', () async {
+      final repository = _Repository();
+      final model = notesModel(repository);
+      model
+        ..setInput('Plan trip')
+        ..setNotes('Book train\nPack charger');
+
+      await model.submit();
+
+      final command = repository.created.single;
+      expect(command.title, 'Plan trip');
+      expect(command.notes, 'Book train\nPack charger');
+      expect(command.taskListId, const TaskListId(7));
+      expect(model.state.input, isEmpty);
+      expect(model.state.notes, isEmpty);
+      expect(model.state.successMessage, isNotNull);
+    });
+
+    test('blank notes stay absent rather than empty', () async {
+      final repository = _Repository();
+      final model = notesModel(repository);
+      model
+        ..setInput('No notes')
+        ..setNotes('  \n ');
+
+      await model.submit();
+
+      expect(repository.created.single.notes, isNull);
+    });
+
+    test('an empty title keeps the notes and creates nothing', () async {
+      final repository = _Repository();
+      final model = notesModel(repository);
+      model
+        ..setInput('   ')
+        ..setNotes('Keep these notes');
+
+      await model.submit();
+
+      expect(repository.created, isEmpty);
+      expect(model.state.failureMessage, 'Enter a task title.');
+      expect(model.state.input, '   ');
+      expect(model.state.notes, 'Keep these notes');
+    });
+
+    test('a storage failure keeps title and notes for retry', () async {
+      final repository = _Repository()
+        ..result = Future.value(const Outcome.failure(_persistenceFailure));
+      final model = notesModel(repository);
+      model
+        ..setInput('Retry me')
+        ..setNotes('Retained notes');
+
+      await model.submit();
+
+      expect(model.state.input, 'Retry me');
+      expect(model.state.notes, 'Retained notes');
+      expect(model.state.failureMessage, 'The task could not be saved safely.');
+
+      repository.result = Future.value(const Outcome.success(TaskId(31)));
+      await model.submit();
+
+      expect(repository.created, hasLength(2));
+      expect(repository.created.last.title, 'Retry me');
+      expect(repository.created.last.notes, 'Retained notes');
+      expect(model.state.notes, isEmpty);
+    });
+
+    test('too-long notes are explained and kept', () async {
+      final repository = _Repository()
+        ..result = Future.value(
+          const Outcome.failure(
+            Failure(
+              code: 'task.notes_too_long',
+              category: FailureCategory.internal,
+              operation: FailureOperation.write,
+              retry: RetryClassification.permanent,
+              impact: 'The task was not saved.',
+              safeSummary: 'Notes are too long.',
+            ),
+          ),
+        );
+      final model = notesModel(repository);
+      model
+        ..setInput('Long notes')
+        ..setNotes('x' * 8193);
+
+      await model.submit();
+
+      expect(
+        model.state.failureMessage,
+        'Task notes can contain at most 8192 characters.',
+      );
+      expect(model.state.notes, hasLength(8193));
+    });
+
+    test('two consecutive captures create two distinct tasks', () async {
+      final repository = _Repository();
+      final model = notesModel(repository);
+      model
+        ..setInput('First')
+        ..setNotes('First notes');
+      final first = model.submit();
+      // A second tap while the first is in flight joins it.
+      final duplicate = model.submit();
+      await Future.wait(<Future<void>>[first, duplicate]);
+      model.setInput('Second');
+      await model.submit();
+
+      expect(repository.created.map((command) => command.title), <String>[
+        'First',
+        'Second',
+      ]);
+      expect(repository.created.map((command) => command.notes), <String?>[
+        'First notes',
+        null,
+      ]);
+    });
+
+    test('clearDraft discards title, notes and choices without a command', () {
+      final repository = _Repository();
+      final model = notesModel(repository)
+        ..setInput('Abandon')
+        ..setNotes('Abandoned notes')
+        ..selectDueShortcut(DateShortcut.tomorrow);
+
+      model.clearDraft();
+
+      expect(repository.created, isEmpty);
+      expect(model.state.input, isEmpty);
+      expect(model.state.notes, isEmpty);
+      expect(model.state.hasExplicitDue, isFalse);
+      expect(model.state.previewDue, isNull);
+    });
+  });
 }
 
 const _lists = <CachedTaskList>[

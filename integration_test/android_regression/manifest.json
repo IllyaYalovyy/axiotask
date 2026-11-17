@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 5,
+  "manifest_version": 6,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -167,9 +167,10 @@
       "flow": "Notes during capture",
       "audit_classification": "Removed feature",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/capture_test.dart",
       "owner": "android-capture-composer",
       "subsets": [
@@ -346,9 +347,10 @@
       "flow": "Phone add button and composer",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/capture_test.dart",
       "owner": "android-capture-composer",
       "subsets": [

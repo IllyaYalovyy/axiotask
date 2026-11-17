@@ -2719,6 +2719,464 @@ void main() {
     },
   );
 
+  group('phone capture composer (Android audit 08, 20 and 27)', () {
+    setUpAll(loadAndroidTextFont);
+    final addButton = find.byKey(const Key('phone-add-task'));
+    final composer = find.byKey(const Key('composer-surface'));
+    final title = find.byKey(const Key('quick-add-input'));
+    final notes = find.byKey(const Key('quick-add-notes'));
+    final submit = find.byKey(const Key('quick-add-submit'));
+    final cancel = find.byKey(const Key('composer-cancel'));
+
+    bool focused(WidgetTester tester, Finder field) => tester
+        .widget<EditableText>(
+          find.descendant(of: field, matching: find.byType(EditableText)),
+        )
+        .focusNode
+        .hasFocus;
+
+    String text(WidgetTester tester, Finder field) => tester
+        .widget<EditableText>(
+          find.descendant(of: field, matching: find.byType(EditableText)),
+        )
+        .controller
+        .text;
+
+    /// Raises a simulated keyboard over the bottom [fraction] of the view
+    /// (about 40% in portrait and half in landscape, as phone keyboards
+    /// take). As on Android, the keyboard covers the navigation bar, so the
+    /// bottom padding becomes zero.
+    Future<double> raiseKeyboard(
+      WidgetTester tester, {
+      double? fraction,
+    }) async {
+      final size = tester.view.physicalSize;
+      final share = fraction ?? (size.width > size.height ? 0.5 : 0.4);
+      tester.view
+        ..viewInsets = FakeViewPadding(bottom: size.height * share)
+        ..padding = const FakeViewPadding(top: 24);
+      await tester.pumpAndSettle();
+      return size.height * (1 - share);
+    }
+
+    Future<void> lowerKeyboard(WidgetTester tester) async {
+      tester.view
+        ..viewInsets = FakeViewPadding.zero
+        ..padding = const FakeViewPadding(top: 24, bottom: 48);
+      await tester.pumpAndSettle();
+    }
+
+    /// The control is whole on screen, above [keyboardTop] and below the
+    /// status bar, and a touch at its centre reaches it.
+    void expectReachable(
+      WidgetTester tester,
+      Finder control, {
+      required String label,
+      required double keyboardTop,
+    }) {
+      final rect = tester.getRect(control);
+      expect(
+        rect.top,
+        greaterThanOrEqualTo(24),
+        reason: '$label clears the status bar',
+      );
+      expect(
+        rect.bottom,
+        lessThanOrEqualTo(keyboardTop),
+        reason: '$label stays above the keyboard ($keyboardTop)',
+      );
+      expectTouchTarget(tester, control, label: label);
+    }
+
+    Future<void> openComposer(WidgetTester tester) async {
+      expect(addButton.hitTestable(), findsOneWidget);
+      await tester.tap(addButton);
+      await tester.pumpAndSettle();
+      expect(composer, findsOneWidget);
+      expect(focused(tester, title), isTrue, reason: 'Title takes focus');
+      expect(addButton, findsNothing, reason: 'The button yields to it');
+    }
+
+    for (final viewport in selectionViewports) {
+      testWidgets('20/27 add button opens a reachable composer at $viewport', (
+        tester,
+      ) async {
+        // Starts in portrait and rotates, as the selection contract does.
+        final fixture = await _pumpSelectionShell(tester, viewport);
+        expect(composer, findsNothing, reason: 'Composer is on demand');
+        expect(title, findsNothing, reason: 'No always-visible capture bar');
+        expectTouchTarget(tester, addButton, label: 'New task');
+        // The button never hides a visible row's controls.
+        final button = measureHitRegion(tester, addButton);
+        for (final id in <int>[11, 13]) {
+          final row = find.byKey(Key('desktop-task-row-$id'));
+          if (row.hitTestable().evaluate().isEmpty) continue;
+          for (final control in <Finder>[
+            find.descendant(of: row, matching: find.byTooltip('Complete task')),
+            find.descendant(
+              of: row,
+              matching: find.byWidgetPredicate(
+                (widget) =>
+                    widget is Tooltip &&
+                    (widget.message ?? '').startsWith('Task actions for'),
+              ),
+            ),
+          ]) {
+            if (control.evaluate().isEmpty) continue;
+            final rect = tester.getRect(control);
+            final visible = rect.intersect(
+              tester.getRect(find.byKey(const Key('desktop-task-scroll'))),
+            );
+            if (visible.isEmpty || visible.height < 1) continue;
+            expect(
+              button.overlaps(visible),
+              isFalse,
+              reason: 'Add button $button covers $control at $visible',
+            );
+          }
+        }
+
+        await openComposer(tester);
+        final keyboardTop = await raiseKeyboard(tester);
+        expect(tester.takeException(), isNull, reason: '$viewport layout');
+        expectReachable(
+          tester,
+          cancel,
+          label: 'Cancel',
+          keyboardTop: keyboardTop,
+        );
+        expectReachable(
+          tester,
+          submit,
+          label: 'Add task',
+          keyboardTop: keyboardTop,
+        );
+        final titleRect = tester.getRect(title);
+        expect(titleRect.bottom, lessThanOrEqualTo(keyboardTop));
+        expect(fixture.tasks.created, isEmpty);
+      });
+    }
+
+    testWidgets('08 keyboard submit stores title and notes in the selected '
+        'list, twice without duplicates', (tester) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      fixture.viewModel.selectTaskList(const TaskListId(8));
+      await tester.pumpAndSettle();
+      await openComposer(tester);
+
+      await tester.enterText(title, 'Phone capture one');
+      await tester.enterText(notes, 'First line\nSecond line');
+      await tester.tap(title);
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(fixture.tasks.created, hasLength(1));
+      expect(fixture.tasks.created.single.title, 'Phone capture one');
+      expect(fixture.tasks.created.single.notes, 'First line\nSecond line');
+      expect(fixture.tasks.created.single.taskListId, const TaskListId(8));
+      // Rapid entry: still open, cleared and focused on the title.
+      expect(composer, findsOneWidget);
+      expect(text(tester, title), isEmpty);
+      expect(text(tester, notes), isEmpty);
+      expect(focused(tester, title), isTrue);
+
+      await tester.enterText(title, 'Phone capture two');
+      await tester.pump();
+      await tester.tap(submit);
+      // A second tap while the first is saving is not a second task.
+      await tester.tap(submit, warnIfMissed: false);
+      await tester.pumpAndSettle();
+
+      expect(fixture.tasks.created.map((command) => command.title), <String>[
+        'Phone capture one',
+        'Phone capture two',
+      ]);
+      expect(fixture.tasks.created.last.notes, isNull);
+      expect(fixture.tasks.created.last.taskListId, const TaskListId(8));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('an empty title is rejected and keeps the notes', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 2),
+      );
+      await openComposer(tester);
+      await tester.enterText(notes, 'Notes without a title');
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      expect(fixture.tasks.created, isEmpty);
+      expect(find.text('Enter a task title.'), findsOneWidget);
+      expect(text(tester, notes), 'Notes without a title');
+      expect(composer, findsOneWidget);
+
+      // Keyboard submit of a blank title is rejected the same way.
+      await tester.enterText(title, '   ');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.created, isEmpty);
+      expect(text(tester, notes), 'Notes without a title');
+    });
+
+    testWidgets('a storage failure keeps title and notes for a retry', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      fixture.tasks.createResult = Future.value(
+        const Outcome<TaskId>.failure(
+          Failure(
+            code: 'task.persistence_failed',
+            category: FailureCategory.persistence,
+            operation: FailureOperation.write,
+            retry: RetryClassification.unknown,
+            impact: 'The task was not saved.',
+            safeSummary: 'The task transaction failed.',
+          ),
+        ),
+      );
+      await openComposer(tester);
+      await tester.enterText(title, 'Survives failure');
+      await tester.enterText(notes, 'Kept notes');
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+
+      expect(find.text('The task could not be saved safely.'), findsOneWidget);
+      expect(text(tester, title), 'Survives failure');
+      expect(text(tester, notes), 'Kept notes');
+      expect(composer, findsOneWidget);
+
+      fixture.tasks.createResult = Future.value(
+        const Outcome<TaskId>.success(TaskId(92)),
+      );
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.created, hasLength(2));
+      expect(fixture.tasks.created.last.title, 'Survives failure');
+      expect(fixture.tasks.created.last.notes, 'Kept notes');
+      expect(text(tester, notes), isEmpty);
+    });
+
+    testWidgets('Back lowers the keyboard, then closes; Cancel discards', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      await openComposer(tester);
+      await tester.enterText(title, 'Draft kept by Back');
+      await tester.enterText(notes, 'Draft notes');
+      await raiseKeyboard(tester);
+      expect(focused(tester, notes), isTrue);
+
+      // First Back: the keyboard goes, the composer stays.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(composer, findsOneWidget);
+      expect(focused(tester, notes), isFalse);
+      expect(focused(tester, title), isFalse);
+      await lowerKeyboard(tester);
+
+      // Second Back: the composer folds away; the button returns.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(composer, findsNothing);
+      expect(addButton.hitTestable(), findsOneWidget);
+      expect(fixture.tasks.created, isEmpty);
+
+      // Back kept the draft; Cancel discards it without a task.
+      await openComposer(tester);
+      expect(text(tester, title), 'Draft kept by Back');
+      expect(text(tester, notes), 'Draft notes');
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(composer, findsNothing);
+      expect(fixture.tasks.created, isEmpty);
+      await openComposer(tester);
+      expect(text(tester, title), isEmpty);
+      expect(text(tester, notes), isEmpty);
+
+      // Cancel on an empty draft creates nothing either.
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.created, isEmpty);
+      expect(fixture.tasks.applied, isEmpty);
+    });
+
+    testWidgets('rotation keeps the open composer and its draft', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 2),
+      );
+      await openComposer(tester);
+      await tester.enterText(title, 'Rotated capture');
+      await tester.enterText(notes, 'Rotated notes');
+
+      tester.view.physicalSize = const PhoneViewport(
+        360,
+        PhoneOrientation.landscape,
+        2,
+      ).logicalSize;
+      await tester.pumpAndSettle();
+      final keyboardTop = await raiseKeyboard(tester);
+      expect(tester.takeException(), isNull);
+      expect(composer, findsOneWidget);
+      expect(text(tester, title), 'Rotated capture');
+      expect(text(tester, notes), 'Rotated notes');
+      expectReachable(
+        tester,
+        submit,
+        label: 'Add task',
+        keyboardTop: keyboardTop,
+      );
+      expectReachable(
+        tester,
+        cancel,
+        label: 'Cancel',
+        keyboardTop: keyboardTop,
+      );
+
+      await tester.tap(submit);
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.created.single.title, 'Rotated capture');
+      expect(fixture.tasks.created.single.notes, 'Rotated notes');
+
+      tester.view.physicalSize = const PhoneViewport(
+        360,
+        PhoneOrientation.portrait,
+        2,
+      ).logicalSize;
+      await lowerKeyboard(tester);
+      expect(tester.takeException(), isNull);
+      expect(composer, findsOneWidget);
+    });
+
+    testWidgets('the quick-add shortcut never opens a composer over details', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      await _tapRowTitle(tester, 'Cached parent');
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+      expect(addButton, findsNothing, reason: 'Details replace the list');
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(composer, findsNothing);
+
+      // One Back leaves the details; no hidden composer swallows it.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+      expect(addButton.hitTestable(), findsOneWidget);
+      expect(composer, findsNothing);
+
+      // On the list itself the shortcut opens the composer.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(composer, findsOneWidget);
+      expect(focused(tester, title), isTrue);
+      expect(fixture.tasks.created, isEmpty);
+    });
+
+    testWidgets('a parsed date is previewed with an explained dismiss chip', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      await openComposer(tester);
+      await tester.enterText(title, 'Call tomorrow');
+      await tester.pump();
+
+      expect(find.text('Create “Call”'), findsOneWidget);
+      expect(
+        find.byTooltip('Dismiss interpreted date and keep it in the title'),
+        findsOneWidget,
+      );
+      expect(fixture.tasks.created, isEmpty);
+    });
+
+    testWidgets('selection mode hides the add button', (tester) async {
+      final fixture = await _pumpPhoneShell(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      fixture.viewModel.beginBulkSelection(const TaskId(11));
+      await tester.pumpAndSettle();
+      expect(addButton, findsNothing);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(addButton.hitTestable(), findsOneWidget);
+    });
+  });
+
+  for (final (platform, width) in <(TargetPlatform, double)>[
+    (TargetPlatform.linux, 412),
+    (TargetPlatform.linux, 1280),
+    (TargetPlatform.android, 1280),
+  ]) {
+    testWidgets('${platform.name} at $width keeps the desktop quick-add bar', (
+      tester,
+    ) async {
+      tester.view
+        ..physicalSize = Size(width, 900)
+        ..devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.good),
+        taskListsRepository: _TaskListsRepository(),
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: axiotaskTheme(
+            Brightness.light,
+            DensityPreference.standard,
+            platform: platform,
+          ),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('phone-add-task')), findsNothing);
+      expect(find.byKey(const Key('composer-surface')), findsNothing);
+      expect(find.byKey(const Key('quick-add-notes')), findsNothing);
+      expect(
+        find.byKey(const Key('quick-add-input')).hitTestable(),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const Key('quick-add-input')),
+        'Desktop capture',
+      );
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(fixture.tasks.created.single.title, 'Desktop capture');
+      expect(fixture.tasks.created.single.notes, isNull);
+      expect(find.byKey(const Key('quick-add-input')), findsOneWidget);
+    });
+  }
+
   group('phone swipe contract (Android audit 02, 03 and 32)', () {
     setUpAll(loadAndroidTextFont);
     final clock = ManualClock(DateTime.utc(2026, 8, 15, 12));
