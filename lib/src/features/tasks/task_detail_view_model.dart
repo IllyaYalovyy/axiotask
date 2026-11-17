@@ -60,6 +60,10 @@ final class TaskDetailViewModel implements Listenable {
   /// The latest single-task command failure, with or without a selection.
   String? get commandFailureMessage => _tasks.state.taskCommandFailureMessage;
 
+  /// The calendar day the application clock observes, which date pickers
+  /// mark as today.
+  TaskDate get today => _tasks.state.today;
+
   /// The current stored version of [taskId], if it is still cached.
   CachedTask? taskById(TaskId taskId) => _tasks.state.tasks
       .where((candidate) => candidate.id == taskId)

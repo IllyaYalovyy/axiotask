@@ -16,6 +16,7 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../test/support/calendar_date.dart';
 import 'support/regression_harness.dart';
 
 /// Swipe travel used by the v1.5.6 audit for task rows and subtask rows.
@@ -194,7 +195,7 @@ void main() {
       description: 'the second task date cleared in SQLite',
     );
     await _swipeSchedule(t, f.row(f.second), -_rowSwipe, 'Choose date');
-    await _chooseDate(t, '2026-12-01');
+    await _chooseDate(t, TaskDate(2026, 12, 1));
     await settleUntil(
       t,
       () async => (await f.task(f.second)).due == TaskDate(2026, 12, 1),
@@ -262,7 +263,7 @@ void main() {
       // Choose date on the sibling writes the sibling only.
       final siblingRow = find.byKey(Key('subtask-${sibling.value}'));
       await _swipeSchedule(t, siblingRow, -_subtaskSwipe, 'Choose date');
-      await _chooseDate(t, '2026-11-20');
+      await _chooseDate(t, TaskDate(2026, 11, 20));
       await settleUntil(
         t,
         () async => (await f.task(sibling)).due == TaskDate(2026, 11, 20),
@@ -274,7 +275,7 @@ void main() {
       // A child date earlier than its parent pulls the parent earlier by the
       // shared due policy, and the details Undo restores both.
       await _swipeSchedule(t, child, -_subtaskSwipe, 'Choose date');
-      await _chooseDate(t, '2026-11-10');
+      await _chooseDate(t, TaskDate(2026, 11, 10));
       await settleUntil(
         t,
         () async =>
@@ -395,19 +396,29 @@ Future<void> _swipeSchedule(
   expect(_sheet, findsNothing);
 }
 
-Future<void> _chooseDate(WidgetTester t, String date) async {
-  final field = find.widgetWithText(TextField, 'Due date (YYYY-MM-DD)');
-  expect(field, findsOneWidget, reason: 'Choose date opens the date dialog');
-  await t.enterText(field, date);
-  await t.tap(find.text('Set date'));
+/// Chooses [date] in the calendar that Choose date opens. Every caller's row
+/// is undated or dated this month, so the calendar opens on the audit month.
+Future<void> _chooseDate(WidgetTester t, TaskDate date) async {
+  expect(
+    calendarPicker,
+    findsOneWidget,
+    reason: 'Choose date opens the calendar',
+  );
+  await navigateCalendar(
+    t,
+    from: (_today.year, _today.month),
+    to: (date.year, date.month),
+  );
+  await tapCalendarDay(t, date.day);
+  expect(t.widget<Text>(calendarSelection).data, calendarSelectionLabel(date));
+  await tapCalendarAction(t, calendarSet);
   // The dialog closes once the due change has committed to SQLite, which
   // can outlast one settle on a slow device.
   await settleUntil(
     t,
-    () => field.evaluate().isEmpty,
-    description: 'the date dialog to close after its save',
+    () => calendarDialog.evaluate().isEmpty,
+    description: 'the calendar to close after its save',
   );
-  expect(field, findsNothing);
 }
 
 Future<void> _expectCompletionUndo(WidgetTester t, String message) async {

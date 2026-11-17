@@ -972,6 +972,32 @@ button versus row controls, keyboard submit, repeated add, empty title,
 storage failure and retry, Back order, Cancel, rotation, selection mode, and
 the desktop bar kept on Linux and wide Android) and the notes tests in
 `test/features/tasks/quick_add_view_model_test.dart`.
+Case 09 (calendar date selection) is corrected by
+`integration_test/android_regression/task_details_test.dart`. Change due date
+→ Choose date must open the calendar (not a typed date) on the stored date
+with that day selected. Month arrows and the year grid navigate; a tapped day
+only selects it. Cancel, Back and a tap outside must leave every SQLite date
+unchanged with no desired-state intent. Set date onto 2028-02-29 must store
+the parent and push its earlier-due child to it, with pending intents for
+both and the cascade Undo restoring both. On the subtask, a later date chosen
+at 320 portrait (1x and 2x text), 360 landscape (1x and 2x) and 443 landscape
+2x must change only the subtask (the parent's date and intent unchanged), with
+the dialog on screen and its actions 48 dp touch targets, captured each time.
+An earlier subtask date pulls the parent and Undo restores both, and Clear
+date stores no date for the parent and keeps the subtask's. Cases 03 and 32
+choose their dates in the same calendar. Baseline case 25 still covers the
+Tomorrow shortcut cascade and Undo. Host coverage is in the phone calendar
+group of `test/features/tasks/adaptive_shell_test.dart` (initial selection,
+navigation, Cancel/Back/outside tap, month, year, leap-day and time-zone-gap
+dates committed exactly, February 2100 without a 29th, Clear, unchanged and
+undated dates, failure and retry, and 320 to 443 widths in both orientations
+at 1x and 2x text), the desktop typed-date test pinned to Linux, and
+`test/features/tasks/task_date_calendar_test.dart` (UTC calendar delegate,
+range and weekday offsets). Run those two host files with `TZ` set to
+`Pacific/Apia`, `America/Santiago` or `America/Sao_Paulo` to exercise days
+whose local midnight does not exist. The repository cascade and Undo across
+month, year and leap-day boundaries is in
+`test/data/database/due_cascade_repository_test.dart`.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

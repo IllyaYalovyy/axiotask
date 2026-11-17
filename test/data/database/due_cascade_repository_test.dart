@@ -96,6 +96,103 @@ void main() {
     },
   );
 
+  test('calendar dates across month, year and leap-day boundaries cascade '
+      'and undo exactly', () async {
+    final database = AppDatabase.inMemory();
+    addTearDown(database.close);
+    final account = AccountId(
+      await database.createAccount('synthetic-calendar-boundary-account'),
+    );
+    final cache = CacheDao(database);
+    final list = await cache.putTaskList(
+      accountId: account,
+      remoteId: const TaskListRemoteId('synthetic-calendar-list'),
+      title: 'Synthetic calendar boundaries',
+    );
+    final parent = await _putTask(
+      cache,
+      account,
+      list,
+      remote: 'calendar-parent',
+      title: 'Calendar parent',
+      due: TaskDate(2027, 1, 1),
+    );
+    final child = await _putTask(
+      cache,
+      account,
+      list,
+      remote: 'calendar-child',
+      title: 'Calendar child',
+      parent: parent,
+      due: TaskDate(2026, 12, 31),
+    );
+    final repository = DatabaseTasksRepository(
+      database,
+      clock: ManualClock(DateTime.utc(2026, 11, 15, 12)),
+    );
+    Future<TaskDueChangeUndo?> setDue(TaskId id, TaskDate? due) async {
+      final result = await repository.setTaskDue(
+        SetTaskDueCommand(accountId: account, taskId: id, due: due),
+      );
+      return (result as Success<TaskDueChangeReceipt>).value.undo;
+    }
+
+    Future<void> undo(TaskDueChangeUndo receipt) async {
+      final result = await repository.undoTaskDueChange(
+        UndoTaskDueChangeCommand(accountId: account, groupId: receipt.groupId),
+      );
+      expect(result, isA<Success<void>>());
+    }
+
+    // A later parent date (a leap day, a year later) pushes the earlier
+    // child across the year boundary to it; Undo restores both days.
+    final pushed = (await setDue(parent, TaskDate(2028, 2, 29)))!;
+    expect(pushed.cascadedCount, 1);
+    expect(pushed.cascadedParent, isFalse);
+    expect(await _dates(repository, account), <TaskId, TaskDate?>{
+      parent: TaskDate(2028, 2, 29),
+      child: TaskDate(2028, 2, 29),
+    });
+    await undo(pushed);
+    expect(await _dates(repository, account), <TaskId, TaskDate?>{
+      parent: TaskDate(2027, 1, 1),
+      child: TaskDate(2026, 12, 31),
+    });
+
+    // A later child date changes only the child; with no cascade there is
+    // no cascade Undo to offer.
+    expect(await setDue(child, TaskDate(2027, 1, 31)), isNull);
+    expect(await _dates(repository, account), <TaskId, TaskDate?>{
+      parent: TaskDate(2027, 1, 1),
+      child: TaskDate(2027, 1, 31),
+    });
+
+    // An earlier child date pulls the parent back across the year and
+    // month boundary; Undo restores the parent and the child-only date.
+    final pulled = (await setDue(child, TaskDate(2026, 11, 30)))!;
+    expect(pulled.cascadedParent, isTrue);
+    expect(await _dates(repository, account), <TaskId, TaskDate?>{
+      parent: TaskDate(2026, 11, 30),
+      child: TaskDate(2026, 11, 30),
+    });
+    expect(
+      (await DesiredStateDao(database).readTask(account, parent))?.due,
+      TaskDate(2026, 11, 30),
+    );
+    await undo(pulled);
+    expect(await _dates(repository, account), <TaskId, TaskDate?>{
+      parent: TaskDate(2027, 1, 1),
+      child: TaskDate(2027, 1, 31),
+    });
+
+    // Clearing the parent never manufactures or clears a child date.
+    await setDue(parent, null);
+    expect(await _dates(repository, account), <TaskId, TaskDate?>{
+      parent: null,
+      child: TaskDate(2027, 1, 31),
+    });
+  });
+
   test('PAR-TASK-006 injected failure accepts no row in the cascade', () async {
     final database = AppDatabase.inMemory();
     addTearDown(database.close);

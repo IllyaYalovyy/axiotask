@@ -167,6 +167,24 @@ are grouped in Organization, while hierarchy changes and deletion remain in
 labeled menus with the existing task-delete Undo contract. Every control stays
 reachable by scrolling at the inspector's minimum supported width and height.
 
+On desktop the custom-date route is a typed `YYYY-MM-DD` date. Touch
+platforms (Android phones and tablets) restore the v1.5.3 calendar instead,
+from both Change due date → Choose date and the swipe scheduling sheet. It
+opens on the task's stored date with that day selected (today's month and no
+selection when undated) and marks today from the application clock. The
+arrows step by month and the month/year header opens a year grid. Tapping a
+day only selects it. Set date stores the selection and Clear date removes the
+date, both through the shared due command, so the parent/subtask cascade and
+its Undo apply. Committing the stored date is not a change. Cancel, Back and
+a tap outside store nothing. A failed change keeps the dialog and its
+selection open with the reason. Calendar arithmetic uses UTC fields, so a day
+whose local midnight is skipped by a daylight-saving or date-line change
+still selects that day. The dialog fits narrow, landscape and 2x-text
+phones: in landscape the summary and actions sit beside the calendar, and
+the calendar scrolls when the screen is shorter than it. As in Material's own
+date picker, the summary and actions scale text up to 1.6x and the day grid
+up to 1.3x, so two-digit days stay whole at 320 logical pixels.
+
 ## Google Tasks UI and links
 
 Every task has an explicit **Open in Google Tasks** action backed by a validated

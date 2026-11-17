@@ -26,6 +26,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../support/calendar_date.dart';
 import '../../support/selection_toolbar.dart';
 import '../../support/touch_targets.dart';
 
@@ -1064,6 +1065,9 @@ void main() {
       await tester.pump();
       expect(fixture.tasks.dueUndos.single.groupId, 41);
     },
+    // Desktop keeps the keyboard-first typed date; touch platforms get the
+    // calendar (see the phone calendar group).
+    variant: TargetPlatformVariant.only(TargetPlatform.linux),
   );
 
   testWidgets('completion control sends one status command', (tester) async {
@@ -3251,13 +3255,13 @@ void main() {
       await tester.drag(row13, const Offset(-130, 0));
       await tester.pumpAndSettle();
       await chooseFromSheet(tester, 'Choose date');
-      await tester.enterText(
-        find.widgetWithText(TextField, 'Due date (YYYY-MM-DD)'),
-        '2026-09-30',
-      );
-      await tester.tap(find.text('Set date'));
+      // The cleared row opens the calendar on today's month, unselected.
+      expectCalendarState(tester, year: 2026, month: 8, selected: null);
+      await navigateCalendar(tester, from: (2026, 8), to: (2026, 9));
+      await tapCalendarDay(tester, 30);
+      await tapCalendarAction(tester, calendarSet);
       await tester.pumpAndSettle();
-      expect(find.text('Choose due date'), findsNothing);
+      expect(calendarDialog, findsNothing);
 
       expect(
         fixture.tasks.dueChanges.map(
@@ -3414,6 +3418,298 @@ void main() {
       await tester.pumpAndSettle();
       expect(fixture.tasks.applied, isEmpty);
     });
+  });
+
+  group('phone calendar date selection (Android audit 09 and 25)', () {
+    setUpAll(loadAndroidTextFont);
+    final clock = ManualClock(DateTime.utc(2026, 8, 15, 12));
+    const viewport = PhoneViewport(360, PhoneOrientation.portrait, 1);
+
+    Future<void> openCalendar(WidgetTester tester) async {
+      final due = find.byKey(const Key('task-detail-due-action'));
+      await tester.ensureVisible(due);
+      await tester.pumpAndSettle();
+      await tester.tap(due);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Choose date').hitTestable());
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsOneWidget);
+      expect(find.byType(CalendarDatePicker), findsOneWidget);
+      expect(
+        find.widgetWithText(TextField, 'Due date (YYYY-MM-DD)'),
+        findsNothing,
+        reason: 'phones choose from the calendar, not a typed date',
+      );
+    }
+
+    List<(TaskId, TaskDate?)> dueCommands(_ShellFixture fixture) =>
+        <(TaskId, TaskDate?)>[
+          for (final command in fixture.tasks.dueChanges)
+            (command.taskId, command.due),
+        ];
+
+    testWidgets('09 Choose date opens the calendar on the current date; '
+        'Cancel, Back and a tap outside change nothing', (tester) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      await _tapRowTitle(tester, 'Cached parent');
+      await openCalendar(tester);
+      expectCalendarState(
+        tester,
+        year: 2026,
+        month: 8,
+        selected: TaskDate(2026, 8, 16),
+      );
+      expect(
+        tester.getSemantics(
+          find.descendant(of: calendarPicker, matching: find.text('15')),
+        ),
+        isSemantics(isSelected: false),
+        reason: 'today (the application clock) is not the selection',
+      );
+
+      // Navigation and a tapped day only change the pending selection.
+      await navigateCalendar(tester, from: (2026, 8), to: (2027, 1));
+      await navigateCalendar(tester, from: (2027, 1), to: (2026, 12));
+      await tapCalendarDay(tester, 31);
+      expectCalendarState(
+        tester,
+        year: 2026,
+        month: 12,
+        selected: TaskDate(2026, 12, 31),
+      );
+      expect(fixture.tasks.dueChanges, isEmpty, reason: 'nothing committed');
+      await tapCalendarAction(tester, calendarCancel);
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsNothing);
+
+      // Cancel discarded the selection; Back and an outside tap also close.
+      await openCalendar(tester);
+      expectCalendarState(
+        tester,
+        year: 2026,
+        month: 8,
+        selected: TaskDate(2026, 8, 16),
+      );
+      await tapCalendarDay(tester, 20);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsNothing);
+      await openCalendar(tester);
+      await tapCalendarDay(tester, 21);
+      await tester.tapAt(const Offset(2, 2));
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsNothing);
+
+      expect(fixture.tasks.dueChanges, isEmpty);
+      expect(fixture.tasks.applied, isEmpty);
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('09 the calendar commits month, year and leap-day boundaries '
+        'as the exact chosen date', (tester) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      await _tapRowTitle(tester, 'Cached parent');
+      final targets = <TaskDate>[
+        TaskDate(2026, 8, 31),
+        TaskDate(2026, 9, 1),
+        TaskDate(2026, 12, 31),
+        TaskDate(2027, 1, 1),
+        TaskDate(2028, 2, 29),
+        TaskDate(2024, 2, 29),
+        TaskDate(2026, 3, 8), // US daylight-saving start
+        TaskDate(2026, 11, 1), // US daylight-saving end
+        TaskDate(2026, 9, 6), // Chile skips local midnight
+        TaskDate(2018, 11, 4), // Brazil skipped local midnight
+        TaskDate(2011, 12, 30), // Samoa skipped the whole day
+        TaskDate(2100, 2, 28),
+      ];
+      for (final target in targets) {
+        await openCalendar(tester);
+        // The stored date never changes in this fixture, so every open
+        // starts from it.
+        await navigateCalendar(
+          tester,
+          from: (2026, 8),
+          to: (target.year, target.month),
+        );
+        await tapCalendarDay(tester, target.day);
+        expectCalendarState(
+          tester,
+          year: target.year,
+          month: target.month,
+          selected: target,
+        );
+        await tapCalendarAction(tester, calendarSet);
+        await tester.pumpAndSettle();
+        expect(calendarDialog, findsNothing, reason: '$target committed');
+        expect(dueCommands(fixture).last, (const TaskId(11), target));
+      }
+      expect(dueCommands(fixture), hasLength(targets.length));
+
+      // 2100 is not a leap year: February has no 29th.
+      await openCalendar(tester);
+      await navigateCalendar(tester, from: (2026, 8), to: (2100, 2));
+      expect(
+        find.descendant(of: calendarPicker, matching: find.text('29')),
+        findsNothing,
+      );
+      await tapCalendarAction(tester, calendarCancel);
+      await tester.pumpAndSettle();
+      expect(dueCommands(fixture), hasLength(targets.length));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('09 Clear date clears; an unchanged date and an undated task '
+        'send nothing until a day is chosen', (tester) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      await _tapRowTitle(tester, 'Cached parent');
+
+      // Committing the stored date is not a change.
+      await openCalendar(tester);
+      await tapCalendarAction(tester, calendarSet);
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsNothing);
+      expect(fixture.tasks.dueChanges, isEmpty);
+
+      await openCalendar(tester);
+      await tapCalendarAction(tester, calendarClear);
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsNothing);
+      expect(dueCommands(fixture), <(TaskId, TaskDate?)>[
+        (const TaskId(11), null),
+      ]);
+
+      // The undated child opens on today's month with nothing selected;
+      // only a chosen day enables Set date, and Clear has nothing to clear.
+      await tester.ensureVisible(find.text('Cached child'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cached child'));
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(12));
+      await openCalendar(tester);
+      expectCalendarState(tester, year: 2026, month: 8, selected: null);
+      expect(tester.widget<FilledButton>(calendarSet).onPressed, isNull);
+      expect(tester.widget<TextButton>(calendarClear).onPressed, isNull);
+      await tapCalendarDay(tester, 15);
+      expectCalendarState(
+        tester,
+        year: 2026,
+        month: 8,
+        selected: TaskDate(2026, 8, 15),
+      );
+      await tapCalendarAction(tester, calendarSet);
+      await tester.pumpAndSettle();
+      expect(dueCommands(fixture).last, (
+        const TaskId(12),
+        TaskDate(2026, 8, 15),
+      ));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('09 a failed date change keeps the calendar and its choice', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      fixture.tasks.dueResult = const Outcome<TaskDueChangeReceipt>.failure(
+        Failure(
+          code: 'task.synthetic_due_rejected',
+          category: FailureCategory.persistence,
+          operation: FailureOperation.write,
+          retry: RetryClassification.permanent,
+          impact: 'Synthetic due failure.',
+          safeSummary: 'Synthetic due failure.',
+        ),
+      );
+      await _tapRowTitle(tester, 'Cached parent');
+      await openCalendar(tester);
+      await tapCalendarDay(tester, 25);
+      await tapCalendarAction(tester, calendarSet);
+      await tester.pumpAndSettle();
+
+      expect(calendarDialog, findsOneWidget, reason: 'nothing was stored');
+      expect(
+        find.byKey(const Key('task-date-calendar-failure')),
+        findsOneWidget,
+      );
+      expectCalendarState(
+        tester,
+        year: 2026,
+        month: 8,
+        selected: TaskDate(2026, 8, 25),
+      );
+      fixture.tasks.dueResult = null;
+      await tapCalendarAction(tester, calendarSet);
+      await tester.pumpAndSettle();
+      expect(calendarDialog, findsNothing, reason: 'the retry succeeded');
+      expect(dueCommands(fixture), <(TaskId, TaskDate?)>[
+        (const TaskId(11), TaskDate(2026, 8, 25)),
+        (const TaskId(11), TaskDate(2026, 8, 25)),
+      ]);
+      expect(tester.takeException(), isNull);
+    });
+
+    for (final calendarViewport in <PhoneViewport>[
+      for (final shortSide in <double>[320, 360, 443])
+        for (final orientation in PhoneOrientation.values)
+          for (final textScale in <double>[1, 2])
+            PhoneViewport(shortSide, orientation, textScale),
+    ]) {
+      testWidgets('09 a subtask date from the calendar at $calendarViewport', (
+        tester,
+      ) async {
+        final fixture = await _pumpSelectionShell(
+          tester,
+          calendarViewport,
+          clock: clock,
+        );
+        await _tapRowTitle(tester, 'Cached parent');
+        final child = find.text('Cached child');
+        await tester.ensureVisible(child);
+        await tester.pumpAndSettle();
+        await tester.tap(child);
+        await tester.pumpAndSettle();
+        expect(fixture.viewModel.state.selectedTaskId, const TaskId(12));
+        await openCalendar(tester);
+        expect(tester.takeException(), isNull, reason: 'calendar layout');
+
+        final dialog = tester.getRect(calendarDialog);
+        final screen = Offset.zero & calendarViewport.logicalSize;
+        expect(
+          screen.contains(dialog.topLeft) &&
+              screen.contains(dialog.bottomRight - const Offset(1, 1)),
+          isTrue,
+          reason: 'the calendar fits the screen: $dialog',
+        );
+        for (final (action, label) in <(Finder, String)>[
+          (calendarCancel, 'Cancel'),
+          (calendarSet, 'Set date'),
+        ]) {
+          expect(action.hitTestable(), findsOneWidget, reason: label);
+          expect(
+            dialog.contains(tester.getCenter(action)),
+            isTrue,
+            reason: '$label stays inside the dialog',
+          );
+        }
+        await tapCalendarDay(tester, 20);
+        expectCalendarState(
+          tester,
+          year: 2026,
+          month: 8,
+          selected: TaskDate(2026, 8, 20),
+        );
+        expectTouchTarget(tester, calendarSet, label: 'Set date');
+        expectTouchTarget(tester, calendarCancel, label: 'Cancel');
+        await tapCalendarAction(tester, calendarSet);
+        await tester.pumpAndSettle();
+        expect(calendarDialog, findsNothing);
+        expect(dueCommands(fixture), <(TaskId, TaskDate?)>[
+          (const TaskId(12), TaskDate(2026, 8, 20)),
+        ]);
+        expect(tester.takeException(), isNull);
+      });
+    }
   });
 }
 
@@ -3701,6 +3997,9 @@ final class _TasksRepository
   final groupUndoController =
       StreamController<List<TaskDeleteGroupUndo>>.broadcast();
   final List<SetTaskDueCommand> dueChanges = <SetTaskDueCommand>[];
+
+  /// When set, every due change is recorded and answered with this result.
+  Outcome<TaskDueChangeReceipt>? dueResult;
   final List<UndoTaskDueChangeCommand> dueUndos = <UndoTaskDueChangeCommand>[];
   final List<DeleteTaskCommand> deleted = <DeleteTaskCommand>[];
   final List<UndoTaskDeleteCommand> undone = <UndoTaskDeleteCommand>[];
@@ -3756,7 +4055,7 @@ final class _TasksRepository
     SetTaskDueCommand command,
   ) async {
     dueChanges.add(command);
-    return const Outcome.success(TaskDueChangeReceipt(undo: null));
+    return dueResult ?? const Outcome.success(TaskDueChangeReceipt(undo: null));
   }
 
   @override

@@ -9,6 +9,7 @@ import '../../../domain/policy/effective_due.dart';
 import '../../../domain/policy/subtask_progress.dart';
 import '../../../domain/policy/task_links.dart';
 import '../task_detail_view_model.dart';
+import 'task_date_calendar.dart';
 import 'task_swipe.dart';
 
 final class TaskDetailsPane extends StatelessWidget {
@@ -939,15 +940,23 @@ final class _TaskContentDialogState extends State<_TaskContentDialog> {
   );
 }
 
+/// Opens date selection for [task]: a calendar on touch platforms (as
+/// v1.5.3 did on phones) and the typed date dialog on desktop platforms.
+/// Either applies the result through the shared due command.
 Future<void> showTaskDateDialog(
   BuildContext context,
   TaskDetailViewModel viewModel,
   CachedTask task,
-) => showAppDialog<void>(
-  context: context,
-  kind: AppDialogKind.date,
-  builder: (_) => _TaskDateDialog(viewModel: viewModel, task: task),
-);
+) {
+  final calendar = calendarDatePlatforms.contains(Theme.of(context).platform);
+  return showAppDialog<void>(
+    context: context,
+    kind: AppDialogKind.date,
+    builder: (_) => calendar
+        ? TaskCalendarDateDialog(viewModel: viewModel, task: task)
+        : _TaskDateDialog(viewModel: viewModel, task: task),
+  );
+}
 
 final class _TaskDateDialog extends StatefulWidget {
   const _TaskDateDialog({required this.viewModel, required this.task});
