@@ -109,22 +109,47 @@ void main() {
     await tester.tap(find.text('Restarted subtask'));
     await tester.pump();
     expect(find.byKey(const Key('task-detail-structure-menu')), findsOneWidget);
-    await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Promote to task'));
-    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(const Key('task-detail-structure-menu')),
+    );
+    await _tapVisible(tester, find.text('Promote to task'));
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          viewModel.state.selectedTask?.id == leaf &&
+          viewModel.state.selectedTask?.parentTaskId == null,
+    );
     expect(find.widgetWithText(OutlinedButton, 'Move down'), findsOneWidget);
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Move down'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(OutlinedButton, 'Move to list'));
-    await tester.pumpAndSettle();
-    await tester.tap(
+    await _tapVisible(tester, find.widgetWithText(OutlinedButton, 'Move down'));
+    await _waitFor(tester, () => !viewModel.state.isTaskCommandPending);
+    final reordered = await tasks
+        .watchTasks(TasksQuery(accountId: account))
+        .first;
+    expect(
+      reordered.tasks
+          .where((task) => task.taskListId == list)
+          .map((task) => task.id),
+      <TaskId>[parent, leaf],
+    );
+    await _tapVisible(
+      tester,
+      find.widgetWithText(OutlinedButton, 'Move to list'),
+    );
+    await _tapVisible(
+      tester,
       find.descendant(
         of: find.byType(AlertDialog),
         matching: find.widgetWithText(ListTile, 'Hierarchy archive'),
       ),
     );
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          viewModel.state.selectedTask?.taskListId == archive,
+    );
 
     final snapshot = await tasks
         .watchTasks(TasksQuery(accountId: account))
@@ -134,6 +159,25 @@ void main() {
     expect(moved.taskListId, archive);
     expect(find.text('Restarted subtask'), findsWidgets);
   });
+}
+
+Future<void> _tapVisible(WidgetTester tester, Finder target) async {
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  expect(target.hitTestable(), findsOneWidget);
+  await tester.tap(target);
+  await tester.pumpAndSettle();
+}
+
+Future<void> _waitFor(WidgetTester tester, bool Function() ready) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 15));
+  while (!ready()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for stored hierarchy state');
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  await tester.pumpAndSettle();
 }
 
 Future<TaskId> _putTask(
