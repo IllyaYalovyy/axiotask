@@ -1159,7 +1159,9 @@ final class _ApplicationHeader extends StatelessWidget {
                       child: SyncHealthHeader(
                         health: health,
                         diagnosticsBuilder: diagnosticsBuilder,
-                        iconOnly: largeText || width < 600,
+                        // Reserve room for navigation, search, refresh, stop
+                        // and More, including a landscape display cutout.
+                        iconOnly: largeText || width < 760,
                       ),
                     ),
                   _HeaderFocusOrder(

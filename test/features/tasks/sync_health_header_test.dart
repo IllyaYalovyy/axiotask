@@ -435,6 +435,41 @@ void main() {
       }
     });
 
+    testWidgets('recent failure feedback stays bounded on a 320 by 640 phone', (
+      tester,
+    ) async {
+      _useView(tester, 320);
+      tester.view.physicalSize = const Size(320, 640);
+      final actions = <SyncHealthAction>[];
+      final failure = SyncHealth(
+        outcome: SyncHealthOutcome.failed,
+        counts: const SyncWorkCounts(failed: 1),
+        lastSuccessfulSyncAt: evaluatedAt,
+        evaluatedAt: evaluatedAt,
+        failureReason: SyncFailureReason.applicationFailure,
+        diagnosticCode: 'regression.unspecified_failure',
+        action: SyncHealthAction.retry,
+      );
+      await tester.pumpWidget(
+        _phone(1, SyncHealthHeader(health: failure, onAction: actions.add)),
+      );
+      expect(
+        tester.getSize(find.byKey(const Key('sync-health-banner'))).height,
+        lessThanOrEqualTo(128),
+      );
+      for (final key in <String>[
+        'sync-health-headline',
+        'sync-health-explanation',
+        'sync-health-last-success',
+      ]) {
+        expect(_whole(tester, find.byKey(Key(key))), isTrue, reason: key);
+      }
+      final retry = find.byKey(const Key('sync-health-action'));
+      expectTouchTarget(tester, retry, label: 'Retry');
+      await tester.tap(retry);
+      expect(actions, <SyncHealthAction>[SyncHealthAction.retry]);
+    });
+
     testWidgets('unknown failures state uncertainty and offer details', (
       tester,
     ) async {

@@ -67,7 +67,8 @@ void main() {
       description: 'the verified sync to project Good',
     );
     expect(find.byKey(const Key('sync-health-good')).hitTestable(), findsOne);
-    final rowTop = t.getTopLeft(f.row(f.parent));
+    final collection = find.byKey(const Key('collection-header-scroll'));
+    final collectionTop = t.getTopLeft(collection);
     final header = t.getRect(
       find.byKey(const Key('desktop-application-header')),
     );
@@ -130,16 +131,18 @@ void main() {
     expect(announced, contains('Synchronization Pending'));
     expect(announced, contains('Last successful sync 2026-11-15 11:59 UTC'));
     expect(announced, isNot(contains('Synced')));
-    // The only thing above the list that the edit added is its own
-    // completion Undo bar; sync status took no room.
+    // The only thing above the collection that the edit added is its own
+    // completion Undo bar; sync status took no room. Measure the collection
+    // boundary: its internal header may dock Add when Undo reduces the space
+    // available on a short phone.
     expect(
       t.getRect(find.byKey(const Key('desktop-application-header'))),
       header,
     );
     expect(
-      t.getTopLeft(f.row(f.parent)).dy - rowTop.dy,
+      t.getTopLeft(collection).dy - collectionTop.dy,
       t.getSize(find.byKey(const Key('task-completion-undo'))).height,
-      reason: 'The task list keeps its place',
+      reason: 'Sync status takes no extra space above the collection',
     );
     await f.capture(t, 'pending');
 
@@ -201,9 +204,9 @@ void main() {
       header,
     );
     expect(
-      t.getTopLeft(f.row(f.parent)).dy - rowTop.dy,
+      t.getTopLeft(collection).dy - collectionTop.dy,
       t.getSize(find.byKey(const Key('task-completion-undo'))).height,
-      reason: 'The task list keeps its place while the edit is sent',
+      reason: 'Sync verification takes no extra space above the collection',
     );
     await f.capture(t, 'verifying');
 

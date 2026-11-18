@@ -461,7 +461,7 @@ void main() {
   );
 
   regressionCase('31_settings_theme', (t, f) async {
-    await t.tap(find.text('More').hitTestable());
+    await t.tap(find.byTooltip('More app actions').hitTestable());
     await t.pumpAndSettle();
     await t.tap(find.text('Settings').hitTestable());
     await t.pumpAndSettle();

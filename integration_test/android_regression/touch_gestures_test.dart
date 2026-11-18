@@ -257,7 +257,7 @@ void main() {
             )
             .first,
       );
-      await t.drag(f.row(f.second), const Offset(_rowSwipe, -300));
+      await t.drag(f.row(f.parent), const Offset(_rowSwipe, -300));
       await t.pumpAndSettle();
       expect(list.position.pixels, greaterThan(0), reason: 'the list scrolls');
       expect(await _stored(f), initial);
@@ -297,6 +297,18 @@ void main() {
       expect(find.byKey(const Key('task-completion-undo')), findsNothing);
 
       // Swiping another row completes exactly that row.
+      await t.scrollUntilVisible(
+        f.row(f.second),
+        100,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const Key('desktop-task-scroll')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await t.pumpAndSettle();
+      expect(f.row(f.second).hitTestable(), findsOneWidget);
       await t.drag(f.row(f.second), const Offset(_rowSwipe, 0));
       await settleUntil(
         t,

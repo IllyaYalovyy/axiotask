@@ -297,6 +297,9 @@ final class _ExpandedHealthContent extends StatelessWidget {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final screen = MediaQuery.sizeOf(context);
+        final shortPhone =
+            !largeText && screen.width < 360 && screen.height < 800;
         // Wide layouts keep the controls beside the text in one band.
         if (!largeText && constraints.maxWidth >= 600) {
           return Padding(
@@ -331,15 +334,18 @@ final class _ExpandedHealthContent extends StatelessWidget {
             ),
           );
         }
-        if (!largeText && fitsBeside(constraints.maxWidth)) {
+        if (!largeText && !shortPhone && fitsBeside(constraints.maxWidth)) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[headline, ?explanationText, beside],
           );
         }
-        // The banner never takes more than 40% of a short or large-text
-        // screen: its text scrolls while the controls stay in view.
-        final cap = math.max(160, MediaQuery.sizeOf(context).height * 0.4);
+        // Short phones keep normal-size feedback within a fifth of the
+        // screen. Text scrolls without truncation while controls stay in view.
+        // Large text retains the larger reading area.
+        final cap = shortPhone
+            ? screen.height * 0.2
+            : math.max(160, screen.height * 0.4);
         return ConstrainedBox(
           constraints: BoxConstraints(maxHeight: cap - 6),
           child: Column(
