@@ -23,6 +23,8 @@ final class TaskDetailState {
     required this.isCommandPending,
     required this.failureMessage,
     this.neighbors = TaskNeighbors.none,
+    this.canDuplicate = false,
+    this.duplicated,
   });
 
   final CachedTask task;
@@ -40,6 +42,12 @@ final class TaskDetailState {
   /// Where Previous and Next lead: the neighbours of [task] in the visible
   /// collection, or among its parent's subtasks for a subtask.
   final TaskNeighbors neighbors;
+
+  /// Whether Duplicate is offered for [task].
+  final bool canDuplicate;
+
+  /// The copy most recently made of [task], while its confirmation shows.
+  final TaskDuplicateReceipt? duplicated;
 
   TaskId? get previousTaskId => neighbors.previous;
   TaskId? get nextTaskId => neighbors.next;
@@ -61,8 +69,11 @@ final class TaskDetailViewModel implements Listenable {
   final TasksViewModel _tasks;
   final ValueChanged<TaskId>? navigateToTask;
   final VoidCallback? navigateBack;
-  TaskDetailState? get state =>
-      _project(_tasks.state, _tasks.selectedTaskNeighbors);
+  TaskDetailState? get state => _project(
+    _tasks.state,
+    _tasks.selectedTaskNeighbors,
+    canDuplicate: _tasks.canDuplicateTasks,
+  );
 
   /// Whether a single-task command is running, with or without a selection
   /// (a swipe can act on a row while no task is selected).
@@ -92,8 +103,9 @@ final class TaskDetailViewModel implements Listenable {
 
   static TaskDetailState? _project(
     TasksViewState source,
-    TaskNeighbors neighbors,
-  ) {
+    TaskNeighbors neighbors, {
+    required bool canDuplicate,
+  }) {
     final task = source.selectedTask;
     if (task == null) return null;
     final children = source.tasks
@@ -120,6 +132,15 @@ final class TaskDetailViewModel implements Listenable {
         )
         .toList(growable: false);
     final due = effectiveDueDates(source.tasks)[task.id]!;
+    final duplicated = switch (source.transientFeedback) {
+      TransientTaskFeedback(
+        kind: TransientTaskFeedbackKind.duplicated,
+        duplicate: final receipt?,
+      )
+          when receipt.sourceTaskId == task.id =>
+        receipt,
+      _ => null,
+    };
     return TaskDetailState(
       task: task,
       parent: parent,
@@ -138,6 +159,8 @@ final class TaskDetailViewModel implements Listenable {
       isCommandPending: source.isTaskCommandPending,
       failureMessage: source.taskCommandFailureMessage,
       neighbors: neighbors,
+      canDuplicate: canDuplicate,
+      duplicated: duplicated,
     );
   }
 
@@ -207,6 +230,9 @@ final class TaskDetailViewModel implements Listenable {
   Future<void> undoDueChange(int groupId) => _tasks.undoTaskDueChange(groupId);
 
   Future<void> deleteTask(TaskId taskId) => _tasks.deleteTask(taskId);
+
+  /// Copies [taskId] by the shared duplicate rule; the source stays open.
+  Future<void> duplicate(TaskId taskId) => _tasks.duplicateTask(taskId);
 
   Future<void> promote(TaskId taskId) => _tasks.promoteTask(taskId);
 

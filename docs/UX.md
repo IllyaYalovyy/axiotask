@@ -166,6 +166,15 @@ moved), Previous and Next still lead to the tasks that surrounded it, and a
 deleted task closes details. Pending inline edits are stored on the task being
 left before the next one opens.
 
+The task-detail actions menu offers Duplicate task, as v1.5.3's detail overflow
+did. It creates one new task titled "`<title>` (copy)" in the same list and under
+the same parent, so a duplicated subtask stays a subtask; notes, the due date,
+completion and subtasks are not copied, and Google places the copy first among
+its siblings. Inline edits are stored first, so the copy uses the title the
+editor shows; if they cannot be stored, nothing is copied and the failure is
+shown. Details stay on the original and confirm "Duplicated as “…”" with Open
+copy for a few seconds. A repeated tap while one Duplicate runs makes one copy.
+
 The product and local model support exactly one subtask level. There is no
 deeper-hierarchy UI. Unexpected deeper API data is not edited, flattened, or
 deleted; it produces a typed unsupported-data failure.

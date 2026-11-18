@@ -24,7 +24,7 @@ import '../../sync/health/sync_health.dart';
 import '../../sync/health/sync_health_repository.dart';
 import 'task_content_autosave.dart';
 
-enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess }
+enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess, duplicated }
 
 /// A short-lived result which is intentionally not restored from durable state.
 ///
@@ -33,15 +33,25 @@ enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess }
 final class TransientTaskFeedback {
   const TransientTaskFeedback.invalidDrop(this.message)
     : kind = TransientTaskFeedbackKind.invalidDrop,
-      bulkOperation = null;
+      bulkOperation = null,
+      duplicate = null;
 
   const TransientTaskFeedback.bulkSuccess(this.bulkOperation)
     : kind = TransientTaskFeedbackKind.bulkSuccess,
-      message = null;
+      message = null,
+      duplicate = null;
+
+  /// Confirms a committed Duplicate; the source stays open, so without it
+  /// nothing on screen says the copy exists.
+  const TransientTaskFeedback.duplicated(this.duplicate)
+    : kind = TransientTaskFeedbackKind.duplicated,
+      message = null,
+      bulkOperation = null;
 
   final TransientTaskFeedbackKind kind;
   final String? message;
   final BulkOperationSummary? bulkOperation;
+  final TaskDuplicateReceipt? duplicate;
 }
 
 final class TasksViewState {
@@ -816,6 +826,41 @@ final class TasksViewModel extends ChangeNotifier {
             failure.code == 'task.completion_undo_expired') {
           _withdrawCompletionUndo(undo.operationId);
         }
+      },
+    );
+  }
+
+  /// Whether the task repository offers Duplicate.
+  bool get canDuplicateTasks => tasksRepository is TaskDuplicationRepository;
+
+  /// Copies [taskId] by the shared duplicate rule (`planTaskDuplicate`).
+  ///
+  /// Inline title and notes edits are stored first, so the copy is taken
+  /// from what the editor shows; if they cannot be stored nothing is copied.
+  /// The flush and the command share the single-flight task command, so a
+  /// repeated tap while one Duplicate runs cannot create a second copy.
+  Future<void> duplicateTask(TaskId taskId) {
+    final repository = tasksRepository;
+    if (repository is! TaskDuplicationRepository) {
+      return Future<void>.value();
+    }
+    final duplication = repository as TaskDuplicationRepository;
+    return _performTaskCommand<TaskDuplicateReceipt>(
+      () async {
+        await contentAutosave.flush(taskId);
+        if (contentAutosave.draft(taskId)?.status ==
+            TaskContentSaveStatus.failed) {
+          return const Outcome<TaskDuplicateReceipt>.failure(
+            _duplicateUnsavedEditsFailure,
+          );
+        }
+        return duplication.duplicateTask(
+          DuplicateTaskCommand(accountId: accountId, sourceTaskId: taskId),
+        );
+      },
+      onSuccess: (receipt) async {
+        _showTransientFeedback(TransientTaskFeedback.duplicated(receipt));
+        await localEditCommitted?.call();
       },
     );
   }
@@ -1627,8 +1672,19 @@ String _taskFailureMessage(String code) => switch (code) {
   'task.completion_undo_expired' => 'The completion can no longer be undone.',
   'task.completion_undo_unavailable' =>
     'The completion changed again and can no longer be undone.',
+  'task.duplicate_unsaved_edits' =>
+    'The task edits are not saved, so the task was not duplicated.',
   _ => 'The task could not be saved safely.',
 };
+
+const Failure _duplicateUnsavedEditsFailure = Failure(
+  code: 'task.duplicate_unsaved_edits',
+  category: FailureCategory.internal,
+  operation: FailureOperation.write,
+  retry: RetryClassification.permanent,
+  impact: 'The task was not duplicated.',
+  safeSummary: 'The source task has edits that could not be stored.',
+);
 
 const Object _notProvided = Object();
 

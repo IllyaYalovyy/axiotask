@@ -13,6 +13,7 @@ import '../../domain/policy/bulk_task_operations.dart';
 import '../../domain/policy/completion_policy.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/hierarchy_policy.dart';
+import '../../domain/policy/task_duplication.dart';
 import '../../domain/repository/tasks_repository.dart';
 import 'app_database.dart';
 import 'bulk_operation_dao.dart';
@@ -26,6 +27,7 @@ final class DatabaseTasksRepository
     implements
         TasksRepository,
         TaskCompletionRepository,
+        TaskDuplicationRepository,
         BulkTasksRepository,
         BulkTaskOperationsRepository,
         DestructiveTaskOperationsRepository {
@@ -511,34 +513,7 @@ final class DatabaseTasksRepository
     try {
       final id = await _database.transaction(() async {
         await _requireAccount(command.accountId);
-        await _requireTaskList(command.accountId, command.taskListId);
-        if (command.parentTaskId case final parentId?) {
-          await _requireParent(command.accountId, command.taskListId, parentId);
-        }
-        final taskId = await _cache.putTask(
-          accountId: command.accountId,
-          taskListId: command.taskListId,
-          parentTaskId: command.parentTaskId,
-          remoteId: null,
-          title: command.title,
-          notes: command.notes,
-          status: command.status,
-          due: command.due,
-          position: 'local-pending',
-        );
-        await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
-        await _desired.writeTaskPresent(
-          accountId: command.accountId,
-          taskId: taskId,
-          taskListId: command.taskListId,
-          parentTaskId: command.parentTaskId,
-          title: command.title,
-          notes: command.notes,
-          status: command.status,
-          due: command.due,
-          modifiedAt: clock.now(),
-        );
-        await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+        final taskId = await _insertCreatedTask(command);
         await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
         return taskId;
       });
@@ -552,6 +527,90 @@ final class DatabaseTasksRepository
     } on SqliteException {
       return const Outcome<TaskId>.failure(_persistenceFailure);
     }
+  }
+
+  /// Copies one task by the shared duplicate rule ([planTaskDuplicate]).
+  ///
+  /// The source is read and the copy's projection row and desired create are
+  /// written in one transaction, so a failure leaves no copy and an
+  /// acknowledged copy is always publishable. The copy is an ordinary local
+  /// create: a new local ID and no remote ID, ETag, link or remote base. The
+  /// source row and its desired state are only read.
+  @override
+  Future<Outcome<TaskDuplicateReceipt>> duplicateTask(
+    DuplicateTaskCommand command,
+  ) async {
+    try {
+      final receipt = await _database.transaction(() async {
+        await _requireAccount(command.accountId);
+        final source =
+            await (_database.select(_database.taskCacheRows)..where(
+                  (row) =>
+                      row.accountId.equals(command.accountId.value) &
+                      row.id.equals(command.sourceTaskId.value) &
+                      row.projection.equals(CacheProjection.supported.name),
+                ))
+                .getSingleOrNull();
+        if (source == null) {
+          throw const _TaskCommandException(_taskNotFoundFailure);
+        }
+        final create = planTaskDuplicate(_cachedTask(source))
+            .toCreateCommand(command.accountId);
+        if (validateTaskCommand(create) case final failure?) {
+          throw _TaskCommandException(failure);
+        }
+        final taskId = await _insertCreatedTask(create);
+        await _reach(DesiredStateTransactionBoundary.beforeLocalCommit);
+        return TaskDuplicateReceipt(
+          sourceTaskId: command.sourceTaskId,
+          taskId: taskId,
+          title: create.title,
+        );
+      });
+      return Outcome<TaskDuplicateReceipt>.success(receipt);
+    } on _TaskCommandException catch (error) {
+      return Outcome<TaskDuplicateReceipt>.failure(error.failure);
+    } on DesiredStatePersistenceException {
+      return const Outcome<TaskDuplicateReceipt>.failure(_persistenceFailure);
+    } on CacheInvariantException {
+      return const Outcome<TaskDuplicateReceipt>.failure(_persistenceFailure);
+    } on SqliteException {
+      return const Outcome<TaskDuplicateReceipt>.failure(_persistenceFailure);
+    }
+  }
+
+  /// Writes one new local task and its desired create inside the caller's
+  /// transaction, after checking that its list and parent can publish it.
+  Future<TaskId> _insertCreatedTask(CreateTaskCommand command) async {
+    await _requireTaskList(command.accountId, command.taskListId);
+    if (command.parentTaskId case final parentId?) {
+      await _requireParent(command.accountId, command.taskListId, parentId);
+    }
+    final taskId = await _cache.putTask(
+      accountId: command.accountId,
+      taskListId: command.taskListId,
+      parentTaskId: command.parentTaskId,
+      remoteId: null,
+      title: command.title,
+      notes: command.notes,
+      status: command.status,
+      due: command.due,
+      position: 'local-pending',
+    );
+    await _reach(DesiredStateTransactionBoundary.afterProjectionWrite);
+    await _desired.writeTaskPresent(
+      accountId: command.accountId,
+      taskId: taskId,
+      taskListId: command.taskListId,
+      parentTaskId: command.parentTaskId,
+      title: command.title,
+      notes: command.notes,
+      status: command.status,
+      due: command.due,
+      modifiedAt: clock.now(),
+    );
+    await _reach(DesiredStateTransactionBoundary.afterDesiredStateWrite);
+    return taskId;
   }
 
   @override

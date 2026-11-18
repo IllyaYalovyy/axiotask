@@ -12,6 +12,7 @@ import 'package:axiotask/src/domain/model/bulk_operations.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/policy/smart_views.dart';
+import 'package:axiotask/src/domain/policy/task_duplication.dart';
 import 'package:axiotask/src/domain/repository/preferences_repository.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
@@ -1442,6 +1443,90 @@ void main() {
       expect(fixture.tasks.undone.single.taskId, const TaskId(11));
     },
   );
+
+  testWidgets(
+    'phone task details offer Duplicate as a reachable action that copies '
+    'the open task through the repository (Android audit 14)',
+    (tester) async {
+      tester.view.physicalSize = const Size(443, 986);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pumpAndSettle();
+
+      final taskActions = find.byKey(const Key('task-detail-actions-menu'));
+      await tester.ensureVisible(taskActions);
+      await tester.pumpAndSettle();
+      await tester.tap(taskActions);
+      await tester.pumpAndSettle();
+      final duplicate = find.byKey(const Key('task-detail-duplicate'));
+      expect(find.textContaining('Duplicate').hitTestable(), findsOneWidget);
+      expect(tester.getSize(duplicate).height, greaterThanOrEqualTo(48));
+      await tester.tap(duplicate);
+      await tester.pumpAndSettle();
+
+      expect(fixture.tasks.duplicated.single.sourceTaskId, const TaskId(11));
+      expect(fixture.tasks.created, isEmpty, reason: 'no raw create bypass');
+      expect(
+        fixture.viewModel.state.selectedTaskId,
+        const TaskId(11),
+        reason: 'the source stays open, as in v1.5.3',
+      );
+      final confirmation = find.byKey(const Key('task-detail-duplicated'));
+      await tester.ensureVisible(confirmation);
+      expect(find.text('Duplicated as “Cached parent (copy)”'), findsOneWidget);
+      expect(
+        find.byKey(const Key('task-detail-open-duplicate')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+
+      await tester.pump(TasksViewModel.transientFeedbackDuration);
+      await tester.pumpAndSettle();
+      expect(confirmation, findsNothing);
+    },
+  );
+
+  testWidgets('Duplicate is not offered without a duplication repository', (
+    tester,
+  ) async {
+    final repository = _TasksRepository()..snapshot = _snapshot;
+    final model = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _PlainTasksRepository(repository),
+      syncHealthRepository: _HealthRepository()
+        ..health = _health(SyncHealthOutcome.pending),
+    );
+    addTearDown(model.dispose);
+    model.start();
+    await tester.pump();
+    model.selectTask(const TaskId(11));
+    final detail = TaskDetailViewModel.fromTasks(model);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AnimatedBuilder(
+            animation: detail,
+            builder: (context, _) =>
+                TaskDetailsPane(viewModel: detail, compact: true),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final taskActions = find.byKey(const Key('task-detail-actions-menu'));
+    await tester.ensureVisible(taskActions);
+    await tester.tap(taskActions);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Delete task'), findsOneWidget);
+    expect(find.byKey(const Key('task-detail-duplicate')), findsNothing);
+  });
 
   testWidgets('task list deletion requires explicit destructive confirmation', (
     tester,
@@ -4570,6 +4655,7 @@ final class _TaskListsRepository implements TaskListsRepository {
 final class _TasksRepository
     implements
         TasksRepository,
+        TaskDuplicationRepository,
         BulkTasksRepository,
         BulkTaskOperationsRepository,
         DestructiveTaskOperationsRepository {
@@ -4581,6 +4667,7 @@ final class _TasksRepository
     const Outcome<void>.success(null),
   );
   final List<CreateTaskCommand> created = <CreateTaskCommand>[];
+  final List<DuplicateTaskCommand> duplicated = <DuplicateTaskCommand>[];
   final List<BulkCreateTasksCommand> bulkCreated = <BulkCreateTasksCommand>[];
   final List<ExistingTaskCommand> applied = <ExistingTaskCommand>[];
   final undoController = StreamController<List<TaskDeleteUndo>>.broadcast();
@@ -4608,6 +4695,23 @@ final class _TasksRepository
   Future<Outcome<TaskId>> createTask(CreateTaskCommand command) {
     created.add(command);
     return createResult;
+  }
+
+  @override
+  Future<Outcome<TaskDuplicateReceipt>> duplicateTask(
+    DuplicateTaskCommand command,
+  ) async {
+    duplicated.add(command);
+    final source = snapshot.tasks.singleWhere(
+      (task) => task.id == command.sourceTaskId,
+    );
+    return Outcome.success(
+      TaskDuplicateReceipt(
+        sourceTaskId: source.id,
+        taskId: const TaskId(95),
+        title: planTaskDuplicate(source).title,
+      ),
+    );
   }
 
   @override
@@ -5002,3 +5106,48 @@ final _detailSnapshot = CachedTasksSnapshot(
   ],
   completeness: CacheCompleteness.complete,
 );
+
+/// Exposes only [TasksRepository], hiding the optional capabilities of
+/// [_TasksRepository].
+final class _PlainTasksRepository implements TasksRepository {
+  _PlainTasksRepository(this._delegate);
+
+  final _TasksRepository _delegate;
+
+  @override
+  Stream<CachedTasksSnapshot> watchTasks(TasksQuery query) =>
+      _delegate.watchTasks(query);
+
+  @override
+  Stream<List<TaskDeleteUndo>> watchUndoableTaskDeletes(AccountId accountId) =>
+      _delegate.watchUndoableTaskDeletes(accountId);
+
+  @override
+  Stream<List<TaskDueChangeUndo>> watchUndoableTaskDueChanges(
+    AccountId accountId,
+  ) => _delegate.watchUndoableTaskDueChanges(accountId);
+
+  @override
+  Future<Outcome<TaskId>> createTask(CreateTaskCommand command) =>
+      _delegate.createTask(command);
+
+  @override
+  Future<Outcome<void>> apply(ExistingTaskCommand command) =>
+      _delegate.apply(command);
+
+  @override
+  Future<Outcome<TaskDueChangeReceipt>> setTaskDue(SetTaskDueCommand command) =>
+      _delegate.setTaskDue(command);
+
+  @override
+  Future<Outcome<TaskDeleteReceipt>> deleteTask(DeleteTaskCommand command) =>
+      _delegate.deleteTask(command);
+
+  @override
+  Future<Outcome<void>> undoTaskDelete(UndoTaskDeleteCommand command) =>
+      _delegate.undoTaskDelete(command);
+
+  @override
+  Future<Outcome<void>> undoTaskDueChange(UndoTaskDueChangeCommand command) =>
+      _delegate.undoTaskDueChange(command);
+}

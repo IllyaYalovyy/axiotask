@@ -24,12 +24,21 @@
 // that completing the open task (hidden by the completed filter) still leads
 // to the task after it, and, from SQLite and the publication intents, that an
 // unsaved inline edit is stored on its own task before the next one opens.
-// Case 14 shares this file's manifest path and stays outstanding.
+// Case 14 failed the same audit: the details actions menu had no Duplicate.
+// Its contract opens the menu by touch and selects Duplicate on a subtask and
+// on its parent. Each copy must follow the v1.5.3 rule ("<title> (copy)", the
+// same list and parent, no notes, no date, open, no subtasks), get a new
+// local ID with no Google ID and a pending create intent, and leave every
+// source row, remote base and ETag unchanged. After the app is restarted over
+// the same SQLite file the copies and their hierarchy must still be there, in
+// SQLite and on screen.
 // Run through tool/android_regression/runner.dart.
 import 'package:axiotask/src/data/database/desired_state_dao.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/features/tasks/task_content_autosave.dart';
+import 'package:drift/drift.dart' show Variable;
+import 'package:flutter/rendering.dart' show SemanticsAction;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -545,6 +554,99 @@ void main() {
       expect(f.model.contentAutosave.hasUnsavedChanges, isFalse);
     },
   );
+
+  regressionCase('14_duplicate_action', phoneOnHost: true, (t, f) async {
+    final sourcesBefore = <TaskId, Object?>{
+      for (final id in <TaskId>[f.parent, f.child, f.second])
+        id: await _storedSource(f, id),
+    };
+    final rowsBefore = (await f.tasks()).length;
+
+    // A subtask: open it from its parent and select Duplicate by touch.
+    await f.openParent(t);
+    await t.ensureVisible(find.text('Audit child'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Audit child'));
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, f.child);
+    await _openTaskActions(t);
+    expect(
+      find.textContaining('Duplicate').hitTestable(),
+      findsOneWidget,
+      reason: 'v1.5.3 offers Duplicate in the task-detail actions',
+    );
+    _expectMenuTarget(t, find.byKey(const Key('task-detail-duplicate')));
+    await f.capture(t, 'actions_menu');
+    await t.tap(find.byKey(const Key('task-detail-duplicate')));
+    final childCopy = await _awaitCopy(t, f, 'Audit child (copy)');
+    expect(f.model.state.selectedTaskId, f.child, reason: 'source stays open');
+    final confirmation = find.byKey(const Key('task-detail-duplicated'));
+    await t.ensureVisible(confirmation);
+    await t.pumpAndSettle();
+    expect(
+      find.text('Duplicated as “Audit child (copy)”').hitTestable(),
+      findsOneWidget,
+    );
+    await f.capture(t, 'subtask_duplicated');
+    await _expectCopy(f, childCopy, parent: f.parent);
+
+    // The parent: back to it and Duplicate again. Its subtask is not copied.
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, f.parent);
+    await _openTaskActions(t);
+    await t.tap(find.byKey(const Key('task-detail-duplicate')));
+    final parentCopy = await _awaitCopy(t, f, 'Audit parent (copy)');
+    await _expectCopy(f, parentCopy, parent: null);
+    expect(
+      (await f.tasks()).where((task) => task.parentTaskId == parentCopy.id),
+      isEmpty,
+      reason: 'v1.5.3 copies a parent without its subtasks',
+    );
+
+    // Open copy leads from the confirmation to the copy.
+    final openCopy = find.byKey(const Key('task-detail-open-duplicate'));
+    await t.ensureVisible(openCopy);
+    await t.pumpAndSettle();
+    expectTouchTarget(t, openCopy, label: 'Open copy');
+    await t.tap(openCopy);
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, parentCopy.id);
+    _expectOpen(t, 'Audit parent (copy)');
+
+    // Exactly two new rows; no source changed.
+    expect((await f.tasks()).length, rowsBefore + 2);
+    for (final entry in sourcesBefore.entries) {
+      expect(
+        await _storedSource(f, entry.key),
+        entry.value,
+        reason: 'source ${entry.key} must not change',
+      );
+    }
+
+    // Restart over the same SQLite file: the copies and hierarchy persist.
+    await f.restartApp(t);
+    expect((await f.tasks()).length, rowsBefore + 2);
+    await _expectCopy(f, await f.task(childCopy.id), parent: f.parent);
+    await _expectCopy(f, await f.task(parentCopy.id), parent: null);
+    for (final entry in sourcesBefore.entries) {
+      expect(await _storedSource(f, entry.key), entry.value);
+    }
+    expect(find.text('Audit parent (copy)'), findsOneWidget);
+    await t.tap(find.text('Audit parent (copy)'));
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, parentCopy.id);
+    _expectOpen(t, 'Audit parent (copy)');
+    expect(find.text('No subtasks'), findsOneWidget);
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    await f.openParent(t);
+    await t.ensureVisible(find.text('Audit child (copy)'));
+    await t.pumpAndSettle();
+    expect(find.text('Audit child (copy)').hitTestable(), findsOneWidget);
+    expect(find.text('Audit child').hitTestable(), findsOneWidget);
+    await f.capture(t, 'after_restart');
+  });
 }
 
 Future<Map<TaskId, TaskDate?>> _dates(RegressionFixture f) async => {
@@ -625,4 +727,100 @@ void _expectTouchTargetsApart(WidgetTester t, Finder first, Finder second) {
   for (final probe in edgeProbes(secondRegion)) {
     expect(reachesControl(t, first, probe), isFalse, reason: '$probe');
   }
+}
+
+Future<void> _openTaskActions(WidgetTester t) async {
+  final actions = find.byKey(const Key('task-detail-actions-menu'));
+  await t.ensureVisible(actions);
+  await t.pumpAndSettle();
+  await t.tap(actions);
+  await t.pumpAndSettle();
+}
+
+/// Waits for exactly one stored task titled [title] and returns it.
+Future<CachedTask> _awaitCopy(
+  WidgetTester t,
+  RegressionFixture f,
+  String title,
+) async {
+  await settleUntil(
+    t,
+    () async => (await f.tasks()).any((task) => task.title == title),
+    description: 'the copy "$title" to be stored in SQLite',
+  );
+  return (await f.tasks()).singleWhere((task) => task.title == title);
+}
+
+/// [copy] follows the v1.5.3 rule and waits, with its own identity, to be
+/// created on Google.
+Future<void> _expectCopy(
+  RegressionFixture f,
+  CachedTask copy, {
+  required TaskId? parent,
+}) async {
+  expect(
+    <TaskId>[f.parent, f.child, f.second],
+    isNot(contains(copy.id)),
+    reason: 'a copy has its own local ID',
+  );
+  expect(copy.taskListId, f.list);
+  expect(copy.parentTaskId, parent);
+  expect(copy.notes, isNull);
+  expect(copy.due, isNull);
+  expect(copy.status, TaskStatus.needsAction);
+  expect(copy.remoteId, isNull, reason: 'no Google ID is reused');
+  expect(copy.webViewLink, isNull);
+  final intent = await DesiredStateDao(f.database).readTask(f.account, copy.id);
+  expect(intent?.state, DesiredStateLifecycle.pending);
+  expect(intent?.title, copy.title);
+  expect(intent?.parentTaskId, parent);
+  expect(intent?.baseRemoteId, isNull);
+  expect(intent?.baseEtag, isNull);
+  final bases = await f.database
+      .customSelect(
+        'SELECT COUNT(*) AS c FROM task_remote_bases WHERE task_id = ?',
+        variables: [Variable<int>(copy.id.value)],
+      )
+      .getSingle();
+  expect(bases.read<int>('c'), 0, reason: 'no remote base or ETag copied');
+}
+
+/// Everything stored for one source task: its row, remote base (with ETag)
+/// and publication intent.
+Future<List<Object?>> _storedSource(RegressionFixture f, TaskId id) async {
+  Future<List<Map<String, Object?>>> rows(String sql) async => [
+    for (final row
+        in await f.database
+            .customSelect(sql, variables: [Variable<int>(id.value)])
+            .get())
+      Map<String, Object?>.of(row.data),
+  ];
+  return <Object?>[
+    await rows('SELECT * FROM tasks WHERE id = ?'),
+    await rows('SELECT * FROM task_remote_bases WHERE task_id = ?'),
+    await rows('SELECT * FROM desired_states WHERE target_task_id = ?'),
+  ];
+}
+
+/// [item] is a whole, on-screen menu entry with a 48 dp tall hit region and
+/// a tap action for assistive technology.
+void _expectMenuTarget(WidgetTester t, Finder item) {
+  final region = measureHitRegion(t, item);
+  final screen = Offset.zero & t.view.physicalSize / t.view.devicePixelRatio;
+  expect(
+    region.height,
+    greaterThanOrEqualTo(kMinInteractiveDimension - hitRegionTolerance),
+    reason: 'menu entry hit region $region is tall enough to tap',
+  );
+  expect(
+    screen.contains(region.topLeft) &&
+        screen.contains(region.bottomRight - const Offset(1, 1)),
+    isTrue,
+    reason: 'menu entry $region lies on the $screen screen',
+  );
+  expect(
+    t.getSemantics(item).getSemanticsData().hasAction(SemanticsAction.tap),
+    isTrue,
+    reason: 'menu entry exposes a tap action',
+  );
 }

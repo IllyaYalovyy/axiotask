@@ -25,6 +25,15 @@ abstract interface class TasksRepository {
   Future<Outcome<void>> undoTaskDueChange(UndoTaskDueChangeCommand command);
 }
 
+/// Duplicate commands that apply the shared duplicate rule
+/// (`planTaskDuplicate`) atomically: either the whole copy and its
+/// publication intent are stored, or nothing is.
+abstract interface class TaskDuplicationRepository {
+  Future<Outcome<TaskDuplicateReceipt>> duplicateTask(
+    DuplicateTaskCommand command,
+  );
+}
+
 abstract interface class BulkTasksRepository {
   Future<Outcome<List<TaskId>>> createTasks(BulkCreateTasksCommand command);
 }

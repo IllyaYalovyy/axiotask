@@ -1057,6 +1057,30 @@ Previous/Next group of `test/features/tasks/adaptive_shell_test.dart`
 sibling steps, a pending edit, no results, and the desktop shortcuts beside
 the controls). `integration_test/search_navigation_linux_test.dart` covers the
 same search Back route on Linux.
+Case 14 (Duplicate in task details) is corrected by
+`integration_test/android_regression/task_details_test.dart`. The v1.5.3
+rule comes from that tag's `duplicateTask` (`lib/src/ui/task_actions.dart`)
+and `test/ui/detail_actions_test.dart`. The case opens the task-detail actions
+by touch, checks the audit's hit-testable Duplicate entry and its 48 dp row,
+and duplicates a subtask and then its parent. SQLite must hold each copy titled
+"`<title>` (copy)" in the same list and parent, open, with no notes, date,
+Google ID, remote base or subtasks, and a pending create intent; every source
+row, remote base and intent must be byte-for-byte unchanged. The harness's
+`restartApp` then unmounts the app, disposes the view model, closes SQLite and
+reopens the file, and the copies, their hierarchy and the parent copy's
+"No subtasks" must still show. Host coverage: `test/domain/task_duplication_test.dart`
+(the rule), `test/data/database/task_duplication_repository_test.dart`
+(identity, untouched synced source, all-or-nothing at every write boundary with
+a single-copy retry, missing/deleted/other-account sources, the title bound,
+reopen), `test/sync/duplicate_sync_engine_test.dart` (create payloads with no
+notes, date, completion or `previous`, the parent's Google ID for a subtask
+copy, ordering behind an unpublished parent, no patch/move/delete and unchanged
+source ETags, no republication, publication exactly once after an interrupted
+run and a restart, and one Google copy after a declined insert is retried),
+`test/features/tasks/task_duplicate_view_model_test.dart` (typed title, edits
+that cannot be stored, single-flight repeated taps, failure then one-copy
+retry, confirmation and Open copy) and the Duplicate widget tests in
+`test/features/tasks/adaptive_shell_test.dart`.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

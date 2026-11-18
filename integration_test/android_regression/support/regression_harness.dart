@@ -167,12 +167,14 @@ final class RegressionFixture {
 
   final String caseId;
   final Directory directory;
-  final AppDatabase database;
+
+  /// The open store; [restartApp] replaces it with a fresh connection.
+  AppDatabase database;
   final ManualClock clock;
   final ControlledSyncHealth health;
   final InMemoryDevicePreferencesBackend devicePreferences;
-  final StoredPreferencesRepository preferences;
-  final DatabaseTasksRepository tasksRepository;
+  StoredPreferencesRepository preferences;
+  DatabaseTasksRepository tasksRepository;
   final AccountId account;
   final TaskListId list;
   final TaskListId destination;
@@ -182,7 +184,7 @@ final class RegressionFixture {
   final List<TaskId> extraTasks;
   final List<TaskId> openChildren;
   final List<TaskId> completedChildren;
-  late final TasksViewModel model;
+  late TasksViewModel model;
 
   /// Number of refresh requests the UI issued; nothing reaches Google.
   int refreshRequests = 0;
@@ -207,7 +209,7 @@ final class RegressionFixture {
       );
     }
     final database = await AppDatabase.openFile(
-      File('${directory.path}/$caseId.sqlite'),
+      _databaseFile(directory, caseId),
     );
     try {
       return await _seed(caseId, directory, database, seed);
@@ -329,14 +331,7 @@ final class RegressionFixture {
     }
 
     final devicePreferences = InMemoryDevicePreferencesBackend();
-    final preferences = StoredPreferencesRepository(
-      relational: DriftRelationalPreferences(database),
-      device: DevicePreferencesAdapter(
-        backend: devicePreferences,
-        namespace: 'regression',
-        diagnostics: ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
-      ),
-    );
+    final preferences = _preferences(database, devicePreferences);
     await preferences.setOnboardingDismissed(true);
 
     final fixture = RegressionFixture._(
@@ -358,19 +353,46 @@ final class RegressionFixture {
       openChildren: openChildren,
       completedChildren: completedChildren,
     );
-    fixture.model = TasksViewModel(
-      accountId: account,
-      tasksRepository: tasksRepository,
-      taskListsRepository: DatabaseTaskListsRepository(
-        database: database,
-        clock: clock,
-      ),
-      syncHealthRepository: fixture.health,
-      clock: clock,
-      preferencesRepository: preferences,
-      refreshRequested: () async => fixture.refreshRequests += 1,
-    );
+    fixture.model = fixture._createModel();
     return fixture;
+  }
+
+  TasksViewModel _createModel() => TasksViewModel(
+    accountId: account,
+    tasksRepository: tasksRepository,
+    taskListsRepository: DatabaseTaskListsRepository(
+      database: database,
+      clock: clock,
+    ),
+    syncHealthRepository: health,
+    clock: clock,
+    preferencesRepository: preferences,
+    refreshRequested: () async => refreshRequests += 1,
+  );
+
+  /// Restarts the application over the same SQLite file, as a process exit
+  /// and relaunch would: the app is unmounted, its view model disposed and
+  /// the store closed, then the file is opened by a new connection and a new
+  /// view model and app are mounted on the seeded list. Everything the case
+  /// reads afterwards comes from what SQLite durably stored.
+  Future<void> restartApp(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    model.dispose();
+    await database.close();
+    database = await AppDatabase.openFile(_databaseFile(directory, caseId));
+    tasksRepository = DatabaseTasksRepository(database, clock: clock);
+    preferences = _preferences(database, devicePreferences);
+    model = _createModel();
+    await tester.pumpWidget(
+      RepaintBoundary(
+        key: _captureBoundary,
+        child: AxiotaskApp(viewModel: model),
+      ),
+    );
+    await tester.pumpAndSettle();
+    model.selectTaskList(list);
+    await tester.pumpAndSettle();
   }
 
   /// Reads the persisted account snapshot from SQLite, not view state.
@@ -436,6 +458,21 @@ final class RegressionFixture {
     await directory.delete(recursive: true);
   }
 }
+
+File _databaseFile(Directory directory, String caseId) =>
+    File('${directory.path}/$caseId.sqlite');
+
+StoredPreferencesRepository _preferences(
+  AppDatabase database,
+  InMemoryDevicePreferencesBackend devicePreferences,
+) => StoredPreferencesRepository(
+  relational: DriftRelationalPreferences(database),
+  device: DevicePreferencesAdapter(
+    backend: devicePreferences,
+    namespace: 'regression',
+    diagnostics: ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
+  ),
+);
 
 /// Health source the test drives explicitly instead of a sync engine.
 final class ControlledSyncHealth implements SyncHealthRepository {

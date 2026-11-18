@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 9,
+  "manifest_version": 10,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -260,9 +260,10 @@
       "flow": "Duplicate task",
       "audit_classification": "Removed feature",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/task_details_test.dart",
       "owner": "android-task-details",
       "subsets": [

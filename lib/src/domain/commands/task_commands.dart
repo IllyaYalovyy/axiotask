@@ -27,6 +27,33 @@ final class CreateTaskCommand extends TaskCommand {
   final TaskDate? due;
 }
 
+/// Creates a copy of [sourceTaskId] by the shared duplicate rule
+/// (`planTaskDuplicate`). The source is read and the copy written in one
+/// local transaction, so the copy reflects the source as stored when the
+/// command runs.
+final class DuplicateTaskCommand extends TaskCommand {
+  const DuplicateTaskCommand({
+    required super.accountId,
+    required this.sourceTaskId,
+  });
+
+  final TaskId sourceTaskId;
+}
+
+/// The committed result of [DuplicateTaskCommand]: [taskId] is the copy's new
+/// local identity and [title] its title.
+final class TaskDuplicateReceipt {
+  const TaskDuplicateReceipt({
+    required this.sourceTaskId,
+    required this.taskId,
+    required this.title,
+  });
+
+  final TaskId sourceTaskId;
+  final TaskId taskId;
+  final String title;
+}
+
 final class BulkCreateTasksCommand extends TaskCommand {
   const BulkCreateTasksCommand({
     required super.accountId,

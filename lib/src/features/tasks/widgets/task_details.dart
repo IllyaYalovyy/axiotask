@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../../../app/navigation_state.dart';
+import '../../../domain/commands/task_commands.dart';
 import '../../../domain/model/tasks.dart';
 import '../../../domain/policy/date_workflow.dart';
 import '../../../domain/policy/effective_due.dart';
@@ -317,9 +318,12 @@ final class TaskDetailsPane extends StatelessWidget {
                   ),
                   _TaskActionsMenu(
                     enabled: !state.isCommandPending,
+                    canDuplicate: state.canDuplicate,
                     taskId: task.id,
                     viewModel: viewModel,
                   ),
+                  if (state.duplicated case final copy?)
+                    _DuplicatedConfirmation(copy: copy, viewModel: viewModel),
                 ],
               ),
             ),
@@ -433,17 +437,28 @@ final class _TaskStructureMenu extends StatelessWidget {
 final class _TaskActionsMenu extends StatelessWidget {
   const _TaskActionsMenu({
     required this.enabled,
+    required this.canDuplicate,
     required this.taskId,
     required this.viewModel,
   });
 
   final bool enabled;
+  final bool canDuplicate;
   final TaskId taskId;
   final TaskDetailViewModel viewModel;
 
   @override
   Widget build(BuildContext context) => MenuAnchor(
     menuChildren: <Widget>[
+      if (canDuplicate)
+        MenuItemButton(
+          key: const Key('task-detail-duplicate'),
+          onPressed: enabled
+              ? () => unawaited(viewModel.duplicate(taskId))
+              : null,
+          leadingIcon: const Icon(Icons.content_copy_outlined),
+          child: const Text('Duplicate task'),
+        ),
       const MenuItemButton(onPressed: null, child: Text('Destructive actions')),
       MenuItemButton(
         onPressed: enabled
@@ -460,6 +475,34 @@ final class _TaskActionsMenu extends StatelessWidget {
           : null,
       icon: const Icon(Icons.more_horiz),
       label: const Text('More actions'),
+    ),
+  );
+}
+
+/// Confirms a committed Duplicate. The source stays open, so this is what
+/// says the copy exists, and it leads to the copy.
+final class _DuplicatedConfirmation extends StatelessWidget {
+  const _DuplicatedConfirmation({required this.copy, required this.viewModel});
+
+  final TaskDuplicateReceipt copy;
+  final TaskDetailViewModel viewModel;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    container: true,
+    child: Wrap(
+      key: const Key('task-detail-duplicated'),
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 4,
+      children: <Widget>[
+        Text('Duplicated as “${copy.title}”'),
+        TextButton(
+          key: const Key('task-detail-open-duplicate'),
+          onPressed: () => viewModel.select(copy.taskId),
+          child: const Text('Open copy'),
+        ),
+      ],
     ),
   );
 }
