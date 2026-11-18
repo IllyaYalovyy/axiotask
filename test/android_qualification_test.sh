@@ -23,6 +23,7 @@ class QualificationTest(unittest.TestCase):
             {'id': 'case', 'contract': 'implemented', 'baseline': {'expected': 'pass', 'label': 'working'}}
         ], 'tracked_findings': []}
         self.acceptance = {'commit': {'head': self.commit, 'tracked_changes': False},
+            'execution_mode': 'instrumented-debug', 'isolated_package': 'com.axiotask.app.integrationtest',
             'subset': 'complete', 'platform': 'android', 'passed': True, 'flutter_test_exit_code': 0,
             'production_package_unchanged': True, 'infrastructure_errors': [], 'teardown_errors': [],
             'manifest_version': 1, 'cases': [{'id': 'case', 'outcome': 'passed', 'label': 'working'}],
@@ -53,6 +54,8 @@ class QualificationTest(unittest.TestCase):
         for key, value in [('commit', {'head': 'c' * 40, 'tracked_changes': False}),
                            ('commit', {'head': self.commit, 'tracked_changes': True}),
                            ('subset', 'baseline'), ('platform', 'host'), ('passed', False),
+                           ('execution_mode', 'signed-release-physical'),
+                           ('isolated_package', 'com.axiotask.app'),
                            ('flutter_test_exit_code', 1), ('production_package_unchanged', False),
                            ('infrastructure_errors', ['offline']), ('teardown_errors', ['leak']),
                            ('manifest_version', 0), ('cases', []),

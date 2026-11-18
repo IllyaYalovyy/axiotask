@@ -47,6 +47,8 @@ void main() {
     expect(device.uninstalled, isTrue);
     final run = _runJson(options);
     expect(run['passed'], isTrue);
+    expect(run['execution_mode'], 'instrumented-debug');
+    expect(run['isolated_package'], isolatedPackage);
     expect(run['commit'], {'head': 'abc123', 'tracked_changes': false});
     expect(run['device'], containsPair('android_api', '36'));
     expect(run['screenshots'], [

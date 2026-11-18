@@ -487,6 +487,9 @@ Future<void> _expectBanner(
 ) async {
   final banner = find.byKey(const Key('sync-health-banner'));
   expect(banner, findsOneWidget, reason: where);
+  final headline = find.byKey(const Key('sync-health-headline'));
+  await t.ensureVisible(headline);
+  await t.pumpAndSettle();
   expect(
     find.text(state.headlineText).hitTestable(),
     findsOneWidget,
@@ -494,7 +497,6 @@ Future<void> _expectBanner(
   );
   final explanation = find.byKey(const Key('sync-health-explanation'));
   expect(t.widget<Text>(explanation).data, state.explanation, reason: where);
-  final headline = find.byKey(const Key('sync-health-headline'));
   expect(_whole(t, headline), isTrue, reason: '$where headline is whole');
   expect(
     _whole(t, find.byKey(const Key('sync-health-last-success'))),
@@ -531,13 +533,16 @@ Future<void> _expectBanner(
       .label;
   expect(announced, contains(state.headline), reason: where);
   expect(announced, contains(state.explanation), reason: where);
-  expectTouchTarget(
-    t,
-    find.byKey(const Key('sync-health-details')),
-    label: 'Sync details',
-  );
+  // The complete feedback region also contains application controls and
+  // other banners. At 2x/landscape it scrolls while keeping tasks visible.
+  final details = find.byKey(const Key('sync-health-details'));
+  await t.ensureVisible(details);
+  await t.pumpAndSettle();
+  expectTouchTarget(t, details, label: 'Sync details');
   final action = find.byKey(const Key('sync-health-action'));
   if (state.action case final label?) {
+    await t.ensureVisible(action);
+    await t.pumpAndSettle();
     expectTouchTarget(t, action, label: label);
     expect(
       t.getRect(action).right,

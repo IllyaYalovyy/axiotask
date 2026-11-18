@@ -24,6 +24,9 @@ def validate(acceptance, smoke, manifest, commit, digest, evidence_root, accepta
             'Acceptance must describe the exact clean source commit')
     require(acceptance['subset'] == 'complete' and acceptance['platform'] == 'android',
             'Complete native Android acceptance is required')
+    require(acceptance['execution_mode'] == 'instrumented-debug' and
+            acceptance['isolated_package'] == 'com.axiotask.app.integrationtest',
+            'Isolated instrumented-debug acceptance is required')
     require(acceptance['passed'] is True and acceptance['flutter_test_exit_code'] == 0,
             'Android acceptance failed')
     require(acceptance['production_package_unchanged'] is True and

@@ -1205,9 +1205,11 @@ exhausted, rate limited, hierarchy, unknown, paused, reauthorize and retrying
 states at 320, 360 and 443 widths, in landscape, and at 2x text. Each must
 show its specific headline and explanation (an unknown cause says so) with
 the headline and last-success age never cut off, a banner at most a quarter
-of a 1x phone and 40% at 2x text (where its text scrolls and the controls stay
-in view) that leaves the first task reachable, and 48 dp details and recovery
-buttons. Each recovery action is tapped and must reach its own coordinator
+of a 1x phone and 40% at 2x text that leaves the first task reachable, and
+48 dp details and recovery buttons. At large text sizes and in landscape,
+the bounded feedback region has a visible scrollbar; the contract scrolls
+to each control and verifies its hit region. Each recovery action is tapped
+and must reach its own coordinator
 port (retry, resume, reauthorize) exactly once; the banner must then follow
 the coordinator's reported state, and recovery returns to the compact
 status. Baseline case 19 keeps the audit's assertions and adds the
@@ -1229,7 +1231,10 @@ committed, so running them never needs the audit folder.
 
 `support/regression_harness.dart` gives each case a fresh synthetic account
 in its own file-backed SQLite database, a `ManualClock` fixed at the audit
-instant, an injected `ControlledSyncHealth`, and in-memory device preferences.
+instant, and an injected `ControlledSyncHealth`. Android cases use the native
+preferences backend under an isolated per-case namespace; host cases use
+in-memory preferences. Restarts preserve the case's preferences, and teardown
+clears only that namespace.
 No refresh reaches Google. Setup pins portrait orientation (or a 412 × 900
 logical phone on desktop hosts). Waits use bounded `settleUntil` conditions
 rather than sleeps. Teardown always runs every step, in reverse setup order: the
@@ -1259,11 +1264,22 @@ PNG screenshots with checksums to `run.json`, uninstalls only the isolated
 package, and verifies that the production package did not change. It exits
 nonzero when any case fails an assertion, is missing, is skipped, reports a
 different label, fails teardown, or is unexpected. It also exits nonzero on
-infrastructure failure. `--subset complete` is the future full gate, and
-reports every outstanding contract as a failure until those tasks land.
+infrastructure failure. `--subset complete` requires all 40 implemented
+contracts: the 36 audit cases and four tracked findings. CI runs this complete
+gate on its API 36 emulator using one aggregate entry point:
+
+```text
+dart run tool/android_regression/run.dart --subset complete \
+  --test-entrypoint integration_test/android_regression/complete_test.dart \
+  --device <android-device-id> --artifacts <evidence-directory>
+```
+
+The aggregate builds one APK while retaining per-case results, screenshots,
+and teardown checks. The runner records `instrumented-debug` execution mode;
+this evidence does not replace signed physical-device qualification.
 `test/tool/android_regression_runner_test.dart` exercises these failure modes.
 `--device linux` runs the same cases on the desktop host without the Android
-package steps. CI runs the baseline on its API 36 emulator.
+package steps. `--subset baseline` remains available for the 17 original passes.
 
 S33 provides the deep synchronization suite:
 

@@ -81,6 +81,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
   final GlobalKey<_TaskCollectionState> _taskCollectionKey =
       GlobalKey<_TaskCollectionState>();
   final FocusNode _quickAddFocus = FocusNode(debugLabel: 'Quick add');
+  final ScrollController _feedbackScroll = ScrollController();
   final FocusNode _navigationPaneFocus = FocusNode(
     debugLabel: 'Desktop navigation pane',
   );
@@ -649,6 +650,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
 
   @override
   void dispose() {
+    _feedbackScroll.dispose();
     widget.viewModel.removeListener(_viewModelChanged);
     _navigation.removeListener(_navigationChanged);
     if (_ownsNavigation) _navigation.dispose();
@@ -707,9 +709,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                                 ? shellConstraints.maxHeight * 0.4
                                 : double.infinity,
                           ),
-                          child: SingleChildScrollView(
-                            key: const Key('shell-feedback-scroll'),
-                            primary: false,
+                          child: _feedbackViewport(
                             child: Column(
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
@@ -920,6 +920,17 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
       ),
     );
   }
+
+  Widget _feedbackViewport({required Widget child}) => Scrollbar(
+    controller: _feedbackScroll,
+    thumbVisibility: true,
+    child: SingleChildScrollView(
+      key: const Key('shell-feedback-scroll'),
+      controller: _feedbackScroll,
+      primary: false,
+      child: child,
+    ),
+  );
 
   /// Places [child] above the phone collection's bottom smart-view
   /// navigation, or above the bottom safe-area inset while the bar yields:

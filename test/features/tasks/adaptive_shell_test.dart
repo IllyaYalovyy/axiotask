@@ -51,6 +51,15 @@ void main() {
         expect(tester.getSize(rows).height, greaterThan(48));
         await tester.ensureVisible(find.text('Cached parent'));
         expect(find.text('Cached parent').hitTestable(), findsOneWidget);
+        final details = find.byKey(const Key('sync-health-details'));
+        if (details.evaluate().isNotEmpty) {
+          await tester.ensureVisible(details);
+          await tester.pumpAndSettle();
+          expectTouchTarget(tester, details, label: 'Sync details');
+          await tester.tap(details);
+          await tester.pumpAndSettle();
+          expect(find.text('Close'), findsOneWidget);
+        }
       });
     }
   });

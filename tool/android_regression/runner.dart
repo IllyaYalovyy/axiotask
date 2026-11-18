@@ -208,6 +208,7 @@ Future<int> runRegression(
       'commit': commit,
       'device_id': options.device,
       'platform': android ? 'android' : 'host',
+      'execution_mode': android ? 'instrumented-debug' : 'host-integration',
       'device': device,
       'isolated_package': android ? isolatedPackage : null,
       'production_package_before': productionBefore,
