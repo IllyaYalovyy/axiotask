@@ -39,6 +39,7 @@ import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/features/tasks/task_content_autosave.dart';
 import 'package:drift/drift.dart' show Variable;
 import 'package:flutter/rendering.dart' show SemanticsAction;
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -312,11 +313,26 @@ void main() {
     await t.tap(title);
     await t.pump();
     await t.enterText(title, 'Parent renamed before switching');
-    await t.pump();
+    await t.pumpAndSettle();
+    // Native IME metrics can arrive after pumpAndSettle. Hide the keyboard
+    // without dropping field focus, so scrolling reaches the subtask while
+    // the parent's draft is still unsaved and switching must flush it.
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    await settleUntil(
+      t,
+      () => t.view.viewInsets.bottom == 0,
+      description: 'the native keyboard to hide before scrolling to a subtask',
+    );
+    expect(f.model.contentAutosave.hasUnsavedChanges, isTrue);
     await t.ensureVisible(find.text('Audit child'));
     await t.pumpAndSettle();
+    expect(find.text('Audit child').hitTestable(), findsOneWidget);
     await t.tap(find.text('Audit child'));
-    await t.pumpAndSettle();
+    await settleUntil(
+      t,
+      () => f.model.state.selectedTaskId == f.child,
+      description: 'the edited parent to flush and its subtask to open',
+    );
     expect(f.model.state.selectedTaskId, f.child);
     expect(find.widgetWithText(TextField, 'Audit child'), findsOneWidget);
     await settleUntil(

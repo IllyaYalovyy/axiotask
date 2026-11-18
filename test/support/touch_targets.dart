@@ -241,7 +241,9 @@ Future<void> expectReadableMenu(
     );
     final itemRect = tester.getRect(item.first);
     expect(
-      itemRect.height,
+      // Read the layout size directly: subtracting global coordinates can
+      // turn an exact 48 dp into 47.99999999999994 at fractional device ratios.
+      tester.getSize(item.first).height,
       greaterThanOrEqualTo(kMinInteractiveDimension),
       reason: '"$label" item is tall enough to tap',
     );
