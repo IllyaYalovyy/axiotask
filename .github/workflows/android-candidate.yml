@@ -1,0 +1,67 @@
+name: Signed Android qualification candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+
+jobs:
+  candidate:
+    name: Build the exact signed Android candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: ./.github/actions/setup-flutter
+      - name: Configure the registered signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEYSTORE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          test -n "$KEYSTORE_BASE64" && test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS" && test -n "$KEY_PASSWORD"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/axiotask-candidate.jks"
+          {
+            echo "storeFile=$RUNNER_TEMP/axiotask-candidate.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+      - name: Build and verify the candidate
+        run: |
+          flutter build apk --release
+          git diff --exit-code -- pubspec.lock
+          ./scripts/check_android_native_assets.sh build/app/outputs/flutter-apk/app-release.apk
+          mkdir -p dist
+          apk="dist/axiotask-android-signed-${GITHUB_SHA}.apk"
+          cp build/app/outputs/flutter-apk/app-release.apk "$apk"
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs "$apk" | tee dist/ANDROID_SIGNING_CERT.txt
+          python3 scripts/check_android_signing_cert.py dist/ANDROID_SIGNING_CERT.txt
+          apkanalyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          test "$("$apkanalyzer" manifest application-id "$apk")" = com.axiotask.app
+          test "$("$apkanalyzer" manifest debuggable "$apk")" = false
+          printf '%s\n' "$GITHUB_SHA" > dist/SOURCE_COMMIT
+          (cd dist && sha256sum *.apk ANDROID_SIGNING_CERT.txt SOURCE_COMMIT > SHA256SUMS)
+      - name: Remove temporary signing configuration
+        if: always()
+        run: rm -f android/key.properties "$RUNNER_TEMP/axiotask-candidate.jks"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-signed-candidate-${{ github.sha }}
+          path: dist/
+          retention-days: 14
+          if-no-files-found: error
+          compression-level: 0

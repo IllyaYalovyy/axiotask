@@ -89,6 +89,15 @@ GitHub runners; the workflow does not install anything on the developer machine.
 
 ### Android candidate qualification before publication
 
+For device verification before creating a release tag, dispatch **Signed Android
+qualification candidate** (`android-candidate.yml`) at the source ref to test.
+It uses the same registered signing secrets and identity checks as distribution
+builds, and uploads `android-signed-candidate-<commit>` with the APK, certificate,
+source SHA and checksums. It does not publish a release. Verify that the matching
+**Tests and commit artifacts** run is green before qualifying the candidate.
+Release publication still requires evidence for the exact distribution APK
+digest; evidence for a different build cannot be substituted.
+
 The Android integration job runs the complete manifest, not just the 17-case
 baseline. Publication also runs `scripts/check_android_qualification.py` against
 that run's acceptance evidence and the exact distribution APK. A missing or
