@@ -16,7 +16,7 @@ runs:
       if: inputs.linux-dependencies == 'true'
       shell: bash
       run: |
-        # Regional EC2 mirrors have stalled hosted runners during downloads.
+        # Regional cloud mirrors have stalled hosted runners during downloads.
         # Keep Ubuntu's signing keys and suites, using its primary HTTPS mirror.
         sudo python3 - <<'PY'
         import pathlib, re
@@ -26,8 +26,10 @@ runs:
         for path in paths:
             if path.is_file():
                 original = path.read_text()
-                updated = re.sub(r'https?://[A-Za-z0-9.-]*ec2\.archive\.ubuntu\.com/ubuntu/?',
+                updated = re.sub(r'mirror\+file:/etc/apt/apt-mirrors\.txt',
                                  'https://archive.ubuntu.com/ubuntu/', original)
+                updated = re.sub(r'https?://(?:[A-Za-z0-9.-]*ec2|azure)\.archive\.ubuntu\.com/ubuntu/?',
+                                 'https://archive.ubuntu.com/ubuntu/', updated)
                 if updated != original:
                     path.write_text(updated)
         PY
