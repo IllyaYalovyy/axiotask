@@ -104,6 +104,8 @@ void main() {
     await t.tap(find.text('Audit child'));
     await t.pumpAndSettle();
     expect(f.model.state.selectedTaskId, f.child);
+    expect(find.widgetWithText(TextField, 'Audit child'), findsOneWidget);
+    expect(find.byTooltip('Back to parent task'), findsOneWidget);
     await t.binding.handlePopRoute();
     await t.pumpAndSettle();
     expect(
@@ -111,6 +113,11 @@ void main() {
       f.parent,
       reason: 'Back from a subtask returns to its parent details',
     );
+    expect(find.widgetWithText(TextField, 'Audit parent'), findsOneWidget);
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, isNull, reason: 'then the list');
+    expect(f.row(f.parent), findsOneWidget);
   });
 
   regressionCase('16_move_task_persists', (t, f) async {

@@ -55,8 +55,10 @@ const _correctedAuditFailures = <String, String>{
   '08_capture_notes': 'android-capture-composer',
   '09_date_calendar': 'android-task-details',
   '11_inline_detail_edit': 'android-task-details',
+  '17_search_open_result': 'android-search-navigation',
   '20_phone_add_affordance': 'android-capture-composer',
   '22_touch_target_size': 'android-task-row-actions',
+  '23_detail_previous_next': 'android-task-details',
   '32_subtask_swipe_schedule': 'android-touch-gestures',
   '33_parent_completion_cascade': 'android-completion-semantics',
 };

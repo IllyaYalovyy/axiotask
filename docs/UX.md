@@ -148,8 +148,23 @@ exits selection through the existing back route.
 Collection views show top-level tasks. Parent rows expose subtask progress and
 the earliest relevant unfinished child date when product policy calls for it.
 Subtasks are managed in task details and are never orphaned as unexplained rows
-in smart views or search results. Search results that match a subtask open its
-parent context and identify the match.
+in smart views or search results. A search result that matches a subtask names
+its parent and opens the matched subtask itself, never the parent; system Back
+then returns to the parent's details and, next, to the collection. The
+collection stays as it was when it shows the hit's top-level task (the task, or
+a subtask's parent); otherwise that task's list opens, as in v1.5.3.
+
+Task details offer Previous and Next beside Back and Close. They step through
+the ordering the user came from: the visible collection, with its view, sort
+and completed filter, for a top-level task, and the parent's subtasks, as
+details list them, for a subtask. Each control is disabled at its end of the
+ordering and in a one-task view. Steps are lateral, so Back still leaves for
+the collection (or the parent of a subtask). Neighbours are resolved by task
+identity when a control is used: when the open task leaves the ordering (it is
+completed while completed tasks are hidden, rescheduled out of a smart view or
+moved), Previous and Next still lead to the tasks that surrounded it, and a
+deleted task closes details. Pending inline edits are stored on the task being
+left before the next one opens.
 
 The product and local model support exactly one subtask level. There is no
 deeper-hierarchy UI. Unexpected deeper API data is not edited, flattened, or

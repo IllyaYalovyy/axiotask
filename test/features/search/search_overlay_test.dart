@@ -8,7 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
-  testWidgets('child matches identify and open their parent context by touch', (
+  testWidgets('child matches name their parent and open the matched subtask', (
     tester,
   ) async {
     final model = SearchViewModel(
@@ -37,7 +37,7 @@ void main() {
     );
     expect(
       find.bySemanticsLabel(
-        'Open Parent context. Matched subtask Child needle. Synthetic inbox.',
+        'Open subtask Child needle of Parent context. Synthetic inbox.',
       ),
       findsOneWidget,
     );

@@ -95,8 +95,11 @@ final class TaskDetailsPane extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
+            // Previous/Next walk the ordering the user came from (the visible
+            // collection, or the parent's subtasks); a disabled arrow marks a
+            // boundary. The title gets the full width beneath, which a phone
+            // needs once four 48 dp controls share the row.
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 if (compact || state.parent != null)
                   IconButton(
@@ -107,7 +110,23 @@ final class TaskDetailsPane extends StatelessWidget {
                     onPressed: viewModel.back,
                     icon: const Icon(Icons.arrow_back),
                   ),
-                Expanded(child: content.title),
+                const Spacer(),
+                IconButton(
+                  key: const Key('task-detail-previous'),
+                  tooltip: 'Previous task',
+                  onPressed: state.previousTaskId == null
+                      ? null
+                      : viewModel.selectPrevious,
+                  icon: const Icon(Icons.chevron_left),
+                ),
+                IconButton(
+                  key: const Key('task-detail-next'),
+                  tooltip: 'Next task',
+                  onPressed: state.nextTaskId == null
+                      ? null
+                      : viewModel.selectNext,
+                  icon: const Icon(Icons.chevron_right),
+                ),
                 IconButton(
                   autofocus: !compact && state.parent == null,
                   tooltip: 'Close details',
@@ -116,6 +135,7 @@ final class TaskDetailsPane extends StatelessWidget {
                 ),
               ],
             ),
+            content.title,
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,

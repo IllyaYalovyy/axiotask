@@ -116,9 +116,11 @@ final class _SearchOverlayState extends State<SearchOverlay> {
                           final matchContext = result.isChildMatch
                               ? 'Matched subtask: ${result.match.title}'
                               : _matchedContext(result);
+                          // A subtask hit opens the subtask itself; the row
+                          // names its parent for context.
                           final semantics = result.isChildMatch
-                              ? 'Open ${result.parent.title}. Matched subtask '
-                                    '${result.match.title}. '
+                              ? 'Open subtask ${result.match.title} of '
+                                    '${result.parent.title}. '
                                     '${result.taskListTitle}.'
                               : 'Open ${result.parent.title}. '
                                     '$matchContext. ${result.taskListTitle}.';

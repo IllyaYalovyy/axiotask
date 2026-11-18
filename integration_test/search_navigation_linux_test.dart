@@ -19,7 +19,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets(
-    'isolated Linux search preserves parent context and back routes',
+    'isolated Linux search opens the matched child with parent back routes',
     (tester) async {
       final root = await Directory.systemTemp.createTemp(
         'axiotask-s25-search-linux-',
@@ -54,7 +54,7 @@ void main() {
         notes: 'Safe synthetic parent notes',
         position: '1',
       );
-      await cache.putTask(
+      final child = await cache.putTask(
         accountId: account,
         taskListId: list,
         parentTaskId: parent,
@@ -113,7 +113,19 @@ void main() {
       expect(find.text('Protected needle row'), findsNothing);
       expect(find.text('Other needle row'), findsNothing);
 
+      // The hit opens the matched child itself, in its parent's context.
       await tester.tap(find.byKey(const Key('search-result-0')));
+      await tester.pumpAndSettle();
+      expect(viewModel.state.selectedTaskId, child);
+      expect(
+        find.widgetWithText(TextField, 'Unicode child 世界 needle'),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('Back to parent task'), findsOneWidget);
+      expect(navigation.state.predictiveBackRoute, TaskDetailRoute(child));
+
+      // Back walks up to the parent's details, then to the collection.
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(viewModel.state.selectedTaskId, parent);
       expect(find.text('Safe synthetic parent notes'), findsOneWidget);

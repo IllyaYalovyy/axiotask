@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 8,
+  "manifest_version": 9,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -304,9 +304,10 @@
       "flow": "Open a subtask search result",
       "audit_classification": "Changed navigation",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/search_test.dart",
       "owner": "android-search-navigation",
       "subsets": [
@@ -395,9 +396,10 @@
       "flow": "Previous/Next in details",
       "audit_classification": "Removed feature",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/task_details_test.dart",
       "owner": "android-task-details",
       "subsets": [

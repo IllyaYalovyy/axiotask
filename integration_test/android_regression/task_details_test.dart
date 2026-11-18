@@ -17,9 +17,17 @@
 // on Back, when opening another task and after the typing debounce; that
 // reopening the task shows the stored text; and that an empty title is
 // rejected while the notes still save.
-// Cases 14 and 23 share this file's manifest path and stay outstanding.
+// Case 23 failed the same audit: details had no Previous/Next controls.
+// Its contract steps through the visible list by touch in manual and title
+// order, proves the controls disable at both boundaries and in a one-task
+// list, that a subtask steps through its siblings and Backs to its parent,
+// that completing the open task (hidden by the completed filter) still leads
+// to the task after it, and, from SQLite and the publication intents, that an
+// unsaved inline edit is stored on its own task before the next one opens.
+// Case 14 shares this file's manifest path and stays outstanding.
 // Run through tool/android_regression/runner.dart.
 import 'package:axiotask/src/data/database/desired_state_dao.dart';
+import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/features/tasks/task_content_autosave.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -370,6 +378,173 @@ void main() {
     );
     expect(f.model.contentAutosave.hasUnsavedChanges, isFalse);
   });
+
+  regressionCase(
+    '23_detail_previous_next',
+    phoneOnHost: true,
+    seed: const RegressionSeed(
+      extraTopLevelTitles: <String>['Audit alpha', 'Audit zulu'],
+      openChildTitles: <String>['Audit second child'],
+    ),
+    (t, f) async {
+      final desired = DesiredStateDao(f.database);
+      final [alpha, zulu] = f.extraTasks;
+      final secondChild = f.openChildren.single;
+      final previous = find.byKey(const Key('task-detail-previous'));
+      final next = find.byKey(const Key('task-detail-next'));
+      final notes = find.byKey(const Key('task-detail-notes'));
+      expect(f.model.state.visibleTasks.map((task) => task.id), <TaskId>[
+        f.parent,
+        f.second,
+        alpha,
+        zulu,
+      ], reason: 'manual order');
+
+      // The audit's assertion: details offer Previous and Next.
+      await f.openParent(t);
+      expect(find.byTooltip('Next task').hitTestable(), findsOneWidget);
+      expect(find.byTooltip('Previous task'), findsOneWidget);
+      expect(_enabled(t), (false, true), reason: 'first task');
+      await f.capture(t, 'first_task');
+      await t.tap(previous);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, f.parent, reason: 'boundary');
+
+      // An unsaved inline edit is stored on its own task as Next opens the
+      // following one, which shows only its own text.
+      await t.tap(notes);
+      await t.pump();
+      await t.enterText(notes, 'Stored before Next');
+      await t.pump();
+      expect((await f.task(f.parent)).notes, 'Audit notes https://example.com');
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, f.second);
+      _expectOpen(t, 'Audit second task');
+      expect(
+        find.widgetWithText(TextField, 'Stored before Next'),
+        findsNothing,
+      );
+      await settleUntil(
+        t,
+        () async => (await f.task(f.parent)).notes == 'Stored before Next',
+        description: 'the parent notes to store as Next opens another task',
+      );
+      final parentIntent = await desired.readTask(f.account, f.parent);
+      expect(parentIntent?.notes, 'Stored before Next');
+      expect(parentIntent?.state, DesiredStateLifecycle.pending);
+      expect((await f.task(f.second)).notes, isNull);
+      expect(await desired.readTask(f.account, f.second), isNull);
+      expect(_enabled(t), (true, true));
+      _expectTouchTargetsApart(t, previous, next);
+      await f.capture(t, 'middle_task');
+
+      // Next walks to the end, where it disables; Previous walks back.
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, alpha);
+      _expectOpen(t, 'Audit alpha');
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, zulu);
+      _expectOpen(t, 'Audit zulu');
+      expect(_enabled(t), (true, false), reason: 'last task');
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, zulu, reason: 'boundary');
+      await t.tap(previous);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, alpha);
+
+      // Stepping is lateral: one Back leaves details for the collection.
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, isNull);
+
+      // Title order: alpha, parent, second, zulu.
+      await t.tap(find.byKey(const Key('collection-sort')));
+      await t.pumpAndSettle();
+      await t.tap(find.widgetWithText(CheckedPopupMenuItem<ViewSort>, 'Title'));
+      await settleUntil(
+        t,
+        () => f.model.state.selectedViewPreferences.sort == ViewSort.title,
+        description: 'title sorting to be selected',
+      );
+      await f.openParent(t);
+      expect(_enabled(t), (true, true));
+      await t.tap(previous);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, alpha, reason: 'title order');
+      expect(_enabled(t), (false, true), reason: 'first by title');
+      await t.tap(next);
+      await t.pumpAndSettle();
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, f.second);
+
+      // Completing the open task hides it from the list; details stay on it
+      // and Next leads to the task that followed it, not one further.
+      await t.tap(find.byKey(const Key('task-detail-completion-action')));
+      await settleUntil(
+        t,
+        () async => (await f.task(f.second)).status == TaskStatus.completed,
+        description: 'the open task to be completed in SQLite',
+      );
+      expect(f.model.state.visibleTasks.map((task) => task.id), <TaskId>[
+        alpha,
+        f.parent,
+        zulu,
+      ]);
+      expect(f.model.state.selectedTaskId, f.second);
+      _expectOpen(t, 'Audit second task');
+      expect(_enabled(t), (true, true));
+      await f.capture(t, 'completed_task');
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, zulu);
+      await t.tap(previous);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, f.parent, reason: 'second hidden');
+
+      // A subtask steps through its siblings; Back returns to the parent.
+      await t.ensureVisible(find.text('Audit child'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Audit child'));
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, f.child);
+      _expectOpen(t, 'Audit child');
+      expect(_enabled(t), (false, true));
+      await t.tap(next);
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, secondChild);
+      _expectOpen(t, 'Audit second child');
+      expect(_enabled(t), (true, false));
+      await f.capture(t, 'subtask_steps');
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskId, f.parent, reason: 'Back to parent');
+      _expectOpen(t, 'Audit parent');
+
+      // A one-task list offers neither direction.
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      await t.tap(find.byTooltip('Open navigation'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Audit destination').hitTestable());
+      await t.pumpAndSettle();
+      expect(f.model.state.selectedTaskListId, f.destination);
+      await t.tap(find.text('Audit destination task'));
+      await t.pumpAndSettle();
+      _expectOpen(t, 'Audit destination task');
+      expect(_enabled(t), (false, false), reason: 'only task in the list');
+
+      // Only the edit and the completion changed anything.
+      for (final id in <TaskId>[alpha, zulu, f.child, secondChild]) {
+        expect(await desired.readTask(f.account, id), isNull, reason: '$id');
+      }
+      expect(f.model.contentAutosave.hasUnsavedChanges, isFalse);
+    },
+  );
 }
 
 Future<Map<TaskId, TaskDate?>> _dates(RegressionFixture f) async => {
@@ -420,5 +595,34 @@ void _expectCalendarFits(WidgetTester t, PhoneViewport viewport) {
   ]) {
     expect(action.hitTestable(), findsOneWidget, reason: '$label $viewport');
     expectTouchTarget(t, action, label: label);
+  }
+}
+
+/// Whether the details' Previous and Next controls are enabled.
+(bool, bool) _enabled(WidgetTester t) => (
+  t
+          .widget<IconButton>(find.byKey(const Key('task-detail-previous')))
+          .onPressed !=
+      null,
+  t.widget<IconButton>(find.byKey(const Key('task-detail-next'))).onPressed !=
+      null,
+);
+
+/// The details show [title] in their own title field.
+void _expectOpen(WidgetTester t, String title) {
+  final field = find.byKey(const Key('task-detail-title'));
+  expect(t.widget<TextField>(field).controller?.text, title);
+}
+
+/// Both controls are 48 dp touch targets and a tap at either's edge never
+/// reaches the other.
+void _expectTouchTargetsApart(WidgetTester t, Finder first, Finder second) {
+  final firstRegion = expectTouchTarget(t, first, label: 'Previous task');
+  final secondRegion = expectTouchTarget(t, second, label: 'Next task');
+  for (final probe in edgeProbes(firstRegion)) {
+    expect(reachesControl(t, second, probe), isFalse, reason: '$probe');
+  }
+  for (final probe in edgeProbes(secondRegion)) {
+    expect(reachesControl(t, first, probe), isFalse, reason: '$probe');
   }
 }

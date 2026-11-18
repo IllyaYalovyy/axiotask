@@ -15,6 +15,7 @@ import '../../domain/policy/bulk_task_operations.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/smart_views.dart';
 import '../../domain/policy/task_links.dart';
+import '../../domain/policy/task_traversal.dart';
 import '../../domain/repository/external_link_launcher.dart';
 import '../../domain/repository/preferences_repository.dart';
 import '../../domain/repository/task_lists_repository.dart';
@@ -172,6 +173,12 @@ final class TasksViewState {
   List<CachedTask> get selectedTaskChildren => List<CachedTask>.unmodifiable(
     tasks.where((value) => value.parentTaskId == selectedTaskId),
   );
+
+  /// The ordering Previous and Next walk for [task]: the visible collection
+  /// (its view, filter and sort) for a top-level task, and its parent's
+  /// subtasks for a subtask.
+  List<TaskId> traversalOrderFor(CachedTask task) =>
+      taskTraversalOrder(task: task, tasks: tasks, visibleTasks: visibleTasks);
 
   ClearCompletedSelection? get clearCompletedSelection {
     final taskListId = selectedTaskListId;
@@ -385,6 +392,21 @@ final class TasksViewModel extends ChangeNotifier {
 
   TasksViewState get state => _state;
 
+  /// The last ordering in which the selected task had a place.
+  TaskTraversalAnchor? _traversalAnchor;
+
+  /// Where Previous and Next in task details lead from the selected task,
+  /// computed by identity from the current visible ordering.
+  TaskNeighbors get selectedTaskNeighbors {
+    final task = _state.selectedTask;
+    if (task == null) return TaskNeighbors.none;
+    return taskNeighbors(
+      selected: task.id,
+      order: _state.traversalOrderFor(task),
+      anchor: _traversalAnchor,
+    );
+  }
+
   void start() {
     if (_started) return;
     _started = true;
@@ -469,6 +491,42 @@ final class TasksViewModel extends ChangeNotifier {
     if (task == null) return;
     _clearInvalidDropFeedback();
     _replaceState(_state.copyWith(selectedTaskId: taskId));
+  }
+
+  /// Opens the task a search result matched, which for a subtask hit is the
+  /// subtask itself, never its parent.
+  ///
+  /// The collection is kept when it shows the task's top-level anchor (the
+  /// task, or the parent of a subtask), so Previous/Next and Back stay in the
+  /// context the search started from. Otherwise the anchor's list opens, as
+  /// in v1.5.3, so the details always sit in a collection that shows where the
+  /// task lives. Returns false, changing nothing, when the task is no longer
+  /// cached.
+  bool openSearchResult(TaskId taskId) {
+    final task = _firstWhereOrNull(_state.tasks, (value) => value.id == taskId);
+    if (task == null) return false;
+    final anchorId = task.parentTaskId ?? task.id;
+    final anchor =
+        _firstWhereOrNull(_state.tasks, (value) => value.id == anchorId) ??
+        task;
+    final shown = _state.visibleProjection.rows.any(
+      (row) => row.task.id == anchor.id,
+    );
+    _clearInvalidDropFeedback();
+    if (shown ||
+        !_state.taskLists.any((list) => list.id == anchor.taskListId)) {
+      _replaceState(_state.copyWith(selectedTaskId: taskId));
+    } else {
+      _replaceState(
+        _state.copyWith(
+          selectedSmartView: null,
+          selectedTaskListId: anchor.taskListId,
+          selectedTaskId: taskId,
+          bulkSelectedTaskIds: const <TaskId>{},
+        ),
+      );
+    }
+    return true;
   }
 
   /// Begins a new pointer drag and removes only an earlier rejection message.
@@ -1479,12 +1537,29 @@ final class TasksViewModel extends ChangeNotifier {
   void _replaceState(TasksViewState value) {
     final previous = _state.selectedTaskId;
     _state = value;
+    _rememberTraversalAnchor();
     // Leaving a task's details (Back, another task, a list or view switch,
     // deletion) stores its inline edits without waiting for the debounce.
     if (previous != null && previous != value.selectedTaskId) {
       unawaited(contentAutosave.flush(previous));
     }
     notifyListeners();
+  }
+
+  /// Records the ordering the selected task currently has a place in. When
+  /// the task leaves it, the previous record stays until another task opens.
+  void _rememberTraversalAnchor() {
+    final task = _state.selectedTask;
+    if (task == null) {
+      _traversalAnchor = null;
+      return;
+    }
+    final order = _state.traversalOrderFor(task);
+    if (order.contains(task.id)) {
+      _traversalAnchor = TaskTraversalAnchor(taskId: task.id, order: order);
+    } else if (_traversalAnchor?.taskId != task.id) {
+      _traversalAnchor = null;
+    }
   }
 
   void _recordUi(String code, DiagnosticEventKind kind, {String? failureCode}) {

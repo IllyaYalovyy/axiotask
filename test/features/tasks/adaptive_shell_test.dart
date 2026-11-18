@@ -166,7 +166,8 @@ void main() {
   });
 
   testWidgets(
-    'search opens child parent context and system back follows route state',
+    'search opens the matched child in its parent context and system back '
+    'follows route state',
     (tester) async {
       tester.view.physicalSize = const Size(1280, 800);
       tester.view.devicePixelRatio = 1;
@@ -201,6 +202,17 @@ void main() {
       await tester.tap(find.byKey(const Key('search-result-0')));
       await tester.pumpAndSettle();
 
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(12));
+      expect(find.widgetWithText(TextField, 'Cached child'), findsOneWidget);
+      expect(find.byTooltip('Back to parent task'), findsOneWidget);
+      expect(navigation.state.routes, <AppRoute>[
+        const CollectionRoute(),
+        const TaskDetailRoute(TaskId(12)),
+      ]);
+
+      // Back walks up to the parent's details, then to the collection.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
       expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
       expect(
         find.text('Stored locally while verification is pending.'),
@@ -210,9 +222,11 @@ void main() {
         navigation.state.predictiveBackRoute,
         const TaskDetailRoute(TaskId(11)),
       );
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+      expect(navigation.state.canHandlePredictiveBack, isFalse);
 
-      fixture.viewModel.clearTaskSelection();
-      await tester.pump();
       await tester.tap(find.byTooltip('Search tasks'));
       await tester.pumpAndSettle();
       expect(navigation.state.predictiveBackRoute, const SearchRoute());
@@ -2600,6 +2614,278 @@ void main() {
     },
   );
 
+  group('phone search and Previous/Next (Android audit 13, 17 and 23)', () {
+    setUpAll(loadAndroidTextFont);
+
+    const viewports = <PhoneViewport>[
+      PhoneViewport(320, PhoneOrientation.portrait, 2),
+      PhoneViewport(360, PhoneOrientation.portrait, 1),
+      PhoneViewport(443, PhoneOrientation.landscape, 2),
+    ];
+
+    Future<_ShellFixture> pump(WidgetTester tester, PhoneViewport viewport) =>
+        _pumpPhoneShell(tester, viewport, snapshot: _navigationSnapshot);
+
+    for (final viewport in viewports) {
+      testWidgets('17 identical parent and child hits open their own task '
+          'at $viewport', (tester) async {
+        final fixture = await pump(tester, viewport);
+        TasksViewState state() => fixture.viewModel.state;
+
+        await _search(tester, 'Shared title');
+        expect(find.byType(ListTile), findsNWidgets(2));
+        await tester.tap(_searchHit('Matched subtask: Shared title'));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(12));
+        expect(find.widgetWithText(TextField, 'Shared title'), findsOneWidget);
+        expect(find.byTooltip('Back to parent task'), findsOneWidget);
+        expect(find.byKey(const Key('search-input')), findsNothing);
+
+        // Back returns to the parent's details, then to the collection.
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(11));
+        expect(find.byTooltip('Back to task collection'), findsOneWidget);
+        expect(find.text('Second child'), findsOneWidget);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, isNull);
+        expect(find.byKey(const Key('desktop-task-row-11')), findsOneWidget);
+
+        await _search(tester, 'Shared title');
+        await tester.tap(_searchHit('Matched title'));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(11));
+        expect(find.byTooltip('Back to task collection'), findsOneWidget);
+        expect(fixture.tasks.applied, isEmpty, reason: 'navigation only');
+        expect(tester.takeException(), isNull);
+      });
+
+      testWidgets('23 Previous/Next step through the visible order by touch '
+          'at $viewport', (tester) async {
+        final fixture = await pump(tester, viewport);
+        TasksViewState state() => fixture.viewModel.state;
+        await tester.tap(find.byKey(const Key('desktop-task-row-11')));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(11));
+
+        // A disabled control at the boundary keeps its 48 dp footprint.
+        expect(
+          tester.getSize(find.byKey(const Key('task-detail-previous'))),
+          const Size(48, 48),
+        );
+        expect(_detailNavigationEnabled(tester), (false, true));
+        await tester.tap(find.byKey(const Key('task-detail-previous')));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(11), reason: 'boundary');
+
+        // Collection order: Shared title, Leaf task, Another leaf.
+        await tester.tap(find.byKey(const Key('task-detail-next')));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(13));
+        expect(find.widgetWithText(TextField, 'Leaf task'), findsOneWidget);
+        expect(_detailNavigationEnabled(tester), (true, true));
+        final previousRegion = expectTouchTarget(
+          tester,
+          find.byKey(const Key('task-detail-previous')),
+          label: 'Previous task',
+        );
+        final nextRegion = expectTouchTarget(
+          tester,
+          find.byKey(const Key('task-detail-next')),
+          label: 'Next task',
+        );
+        for (final probe in edgeProbes(previousRegion)) {
+          expect(
+            reachesControl(
+              tester,
+              find.byKey(const Key('task-detail-next')),
+              probe,
+            ),
+            isFalse,
+          );
+        }
+        for (final probe in edgeProbes(nextRegion)) {
+          expect(
+            reachesControl(
+              tester,
+              find.byKey(const Key('task-detail-previous')),
+              probe,
+            ),
+            isFalse,
+          );
+        }
+        expect(
+          tester.getTopLeft(find.byKey(const Key('task-detail-title'))).dy,
+          greaterThanOrEqualTo(nextRegion.bottom),
+          reason: 'the title gets its own full-width line',
+        );
+        await tester.tap(find.byKey(const Key('task-detail-next')));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(15));
+        expect(_detailNavigationEnabled(tester), (true, false));
+        await tester.tap(find.byKey(const Key('task-detail-next')));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(15), reason: 'boundary');
+        await tester.tap(find.byKey(const Key('task-detail-previous')));
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, const TaskId(13));
+
+        // Stepping is lateral: one Back leaves details.
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+        expect(state().selectedTaskId, isNull);
+        expect(fixture.tasks.applied, isEmpty, reason: 'navigation only');
+        expect(tester.takeException(), isNull);
+      });
+    }
+
+    testWidgets('17 a hit in another list opens in that list', (tester) async {
+      final fixture = await pump(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      TasksViewState state() => fixture.viewModel.state;
+      expect(state().selectedTaskListId, const TaskListId(7));
+
+      await _search(tester, 'Archive needle');
+      await tester.tap(_searchHit('Matched subtask: Archive needle child'));
+      await tester.pumpAndSettle();
+      expect(state().selectedTaskId, const TaskId(17));
+      expect(state().selectedTaskListId, const TaskListId(8));
+      expect(
+        find.widgetWithText(TextField, 'Archive needle child'),
+        findsOneWidget,
+      );
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(state().selectedTaskId, const TaskId(16));
+      expect(_detailNavigationEnabled(tester), (false, false), reason: 'alone');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(state().selectedTaskId, isNull);
+      expect(find.byKey(const Key('desktop-task-row-16')), findsOneWidget);
+      expect(find.byKey(const Key('desktop-task-row-11')), findsNothing);
+    });
+
+    testWidgets('23 a subtask steps through its siblings and keeps its '
+        'parent as Back', (tester) async {
+      final fixture = await pump(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      TasksViewState state() => fixture.viewModel.state;
+      await tester.tap(find.byKey(const Key('desktop-task-row-11')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Second child'));
+      await tester.tap(find.text('Second child'));
+      await tester.pumpAndSettle();
+      expect(state().selectedTaskId, const TaskId(14));
+      expect(_detailNavigationEnabled(tester), (true, false));
+      await tester.tap(find.byKey(const Key('task-detail-previous')));
+      await tester.pumpAndSettle();
+      expect(state().selectedTaskId, const TaskId(12));
+      expect(_detailNavigationEnabled(tester), (false, true));
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(state().selectedTaskId, const TaskId(11));
+    });
+
+    testWidgets('23 a pending inline edit is stored on its own task before '
+        'Next opens another', (tester) async {
+      final fixture = await pump(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      await tester.tap(find.byKey(const Key('desktop-task-row-13')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('task-detail-title')),
+        'Leaf edited',
+      );
+      await tester.pump();
+      expect(fixture.tasks.applied, isEmpty, reason: 'still debouncing');
+
+      await tester.tap(find.byKey(const Key('task-detail-next')));
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(15));
+      final title = fixture.tasks.applied.single as SetTaskTitleCommand;
+      expect(title.taskId, const TaskId(13));
+      expect(title.title, 'Leaf edited');
+      expect(find.widgetWithText(TextField, 'Another leaf'), findsOneWidget);
+      expect(find.widgetWithText(TextField, 'Leaf edited'), findsNothing);
+      expect(fixture.tasks.applied, hasLength(1), reason: 'Another leaf kept');
+    });
+
+    testWidgets('17 a search without results opens nothing', (tester) async {
+      final fixture = await pump(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+      );
+      await _search(tester, 'No such task');
+      expect(find.textContaining('No supported tasks match'), findsOneWidget);
+      expect(find.byType(ListTile), findsNothing);
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('search-input')), findsNothing);
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+    });
+  });
+
+  testWidgets('desktop details step with Previous/Next and keep keyboard '
+      'navigation', (tester) async {
+    tester.view.physicalSize = const Size(1280, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = _ShellFixture(
+      _health(SyncHealthOutcome.good),
+      snapshot: _navigationSnapshot,
+    );
+    addTearDown(fixture.dispose);
+    await tester.pumpWidget(fixture.widget);
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit2);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+    expect(_detailNavigationEnabled(tester), (false, true));
+
+    await tester.tap(find.byKey(const Key('task-detail-next')));
+    await tester.pumpAndSettle();
+    expect(fixture.viewModel.state.selectedTaskId, const TaskId(13));
+    expect(find.byKey(const Key('desktop-task-row-11')), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('task-detail-previous')));
+    await tester.pumpAndSettle();
+    expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+
+    // Task shortcuts still act on the task the controls opened.
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.widgetWithText(TextField, 'Shared title'),
+      ),
+      findsOneWidget,
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(fixture.viewModel.state.selectedTaskId, isNull);
+    expect(fixture.tasks.applied, isEmpty);
+  });
+
   group('phone task-row touch contract (Android audit 01 and 22)', () {
     setUpAll(loadAndroidTextFont);
 
@@ -4487,6 +4773,61 @@ SyncHealth _health(
   counts: const SyncWorkCounts(),
   lastSuccessfulSyncAt: null,
   evaluatedAt: DateTime.utc(2026, 8, 15, 12),
+);
+
+Future<void> _search(WidgetTester tester, String query) async {
+  await tester.tap(find.byTooltip('Search tasks'));
+  await tester.pumpAndSettle();
+  await tester.enterText(find.byKey(const Key('search-input')), query);
+  await tester.pumpAndSettle();
+}
+
+/// The search result row whose subtitle contains [match].
+Finder _searchHit(String match) => find.ancestor(
+  of: find.textContaining(match),
+  matching: find.byType(ListTile),
+);
+
+/// Whether the details' Previous and Next controls are enabled.
+(bool, bool) _detailNavigationEnabled(WidgetTester tester) => (
+  tester
+          .widget<IconButton>(find.byKey(const Key('task-detail-previous')))
+          .onPressed !=
+      null,
+  tester
+          .widget<IconButton>(find.byKey(const Key('task-detail-next')))
+          .onPressed !=
+      null,
+);
+
+CachedTask _navigationTask(int id, String title, {int list = 7, int? parent}) =>
+    CachedTask(
+      id: TaskId(id),
+      accountId: const AccountId(1),
+      taskListId: TaskListId(list),
+      parentTaskId: parent == null ? null : TaskId(parent),
+      remoteId: TaskRemoteId('synthetic-navigation-$id'),
+      title: title,
+      notes: null,
+      status: TaskStatus.needsAction,
+      due: null,
+    );
+
+/// A parent and its child with the same title, a sibling subtask, two more
+/// tasks in the inbox, and a parent with a child in another list.
+final _navigationSnapshot = CachedTasksSnapshot(
+  accountId: const AccountId(1),
+  taskLists: _snapshot.taskLists,
+  tasks: <CachedTask>[
+    _navigationTask(11, 'Shared title'),
+    _navigationTask(12, 'Shared title', parent: 11),
+    _navigationTask(13, 'Leaf task'),
+    _navigationTask(14, 'Second child', parent: 11),
+    _navigationTask(15, 'Another leaf'),
+    _navigationTask(16, 'Archive parent', list: 8),
+    _navigationTask(17, 'Archive needle child', list: 8, parent: 16),
+  ],
+  completeness: CacheCompleteness.complete,
 );
 
 final _snapshot = CachedTasksSnapshot(

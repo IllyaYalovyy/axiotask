@@ -1024,6 +1024,39 @@ that is padded or blank is neither an error nor rewritten (titles are
 written trimmed, so surrounding whitespace alone is no edit), which the
 autosave, real-SQLite (no intent, no sync wake-up after a reopen) and shell
 tests pin down.
+Case 17 (opening a subtask search result) is corrected by
+`integration_test/android_regression/search_test.dart`. Searching for the
+child's title and tapping the result must open that child (the audit's
+assertion on the selected ID), show its own title and Back to parent task,
+and Android Back must return to the parent's details and then the
+collection. A child whose title is identical to its parent's opens itself
+from its subtask hit while the parent hit opens the parent, and a subtask hit
+in the other list opens in that list with the same Back route. A query with
+no results opens nothing. SQLite must hold every task unchanged with no
+publication intent afterwards. Case 13 now also asserts the opened titles
+and the second Back to the collection.
+Case 23 (Previous/Next in details) is corrected by
+`integration_test/android_regression/task_details_test.dart`. Beyond the
+audit's controls, it steps by touch through the manual order and checks the
+open title at each step, the disabled control at both ends, the 48 dp hit
+regions that never reach each other, and that one Back leaves details. A
+notes edit made just before Next must be stored in SQLite and its intent on
+the task being left, never shown on or written to the next. In title order
+it walks from the parent back to Audit alpha. Completing the open task, which
+the completed filter then hides, keeps details on it, and Next leads to the
+task that followed it. A subtask steps to its sibling and Backs to its
+parent, and the one-task destination list disables both controls.
+Host coverage is in `test/domain/task_traversal_test.dart` (boundaries,
+empty and single orderings, reordering, an open task that left the ordering,
+anchors), the Previous/Next and search groups of
+`test/features/tasks/task_detail_view_model_test.dart` (sort, completed
+filter, smart views, subtasks, completion and removal without stale indexes,
+per-task drafts, list landing and uncached hits), and the phone search and
+Previous/Next group of `test/features/tasks/adaptive_shell_test.dart`
+(identical titles, cross-list hits, touch targets at 320 to 443 widths,
+sibling steps, a pending edit, no results, and the desktop shortcuts beside
+the controls). `integration_test/search_navigation_linux_test.dart` covers the
+same search Back route on Linux.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

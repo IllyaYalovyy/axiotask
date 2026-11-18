@@ -5,6 +5,7 @@ import '../../domain/model/tasks.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/effective_due.dart';
 import '../../domain/policy/subtask_progress.dart';
+import '../../domain/policy/task_traversal.dart';
 import 'task_content_autosave.dart';
 import 'tasks_view_model.dart';
 
@@ -21,6 +22,7 @@ final class TaskDetailState {
     required this.destinationLists,
     required this.isCommandPending,
     required this.failureMessage,
+    this.neighbors = TaskNeighbors.none,
   });
 
   final CachedTask task;
@@ -34,6 +36,13 @@ final class TaskDetailState {
   final List<CachedTaskList> destinationLists;
   final bool isCommandPending;
   final String? failureMessage;
+
+  /// Where Previous and Next lead: the neighbours of [task] in the visible
+  /// collection, or among its parent's subtasks for a subtask.
+  final TaskNeighbors neighbors;
+
+  TaskId? get previousTaskId => neighbors.previous;
+  TaskId? get nextTaskId => neighbors.next;
 
   bool get hasChildren => children.isNotEmpty;
   bool get canCreateSubtask => task.parentTaskId == null;
@@ -52,7 +61,8 @@ final class TaskDetailViewModel implements Listenable {
   final TasksViewModel _tasks;
   final ValueChanged<TaskId>? navigateToTask;
   final VoidCallback? navigateBack;
-  TaskDetailState? get state => _project(_tasks.state);
+  TaskDetailState? get state =>
+      _project(_tasks.state, _tasks.selectedTaskNeighbors);
 
   /// Whether a single-task command is running, with or without a selection
   /// (a swipe can act on a row while no task is selected).
@@ -80,7 +90,10 @@ final class TaskDetailViewModel implements Listenable {
   @override
   void removeListener(VoidCallback listener) => _tasks.removeListener(listener);
 
-  static TaskDetailState? _project(TasksViewState source) {
+  static TaskDetailState? _project(
+    TasksViewState source,
+    TaskNeighbors neighbors,
+  ) {
     final task = source.selectedTask;
     if (task == null) return null;
     final children = source.tasks
@@ -124,6 +137,7 @@ final class TaskDetailViewModel implements Listenable {
       ),
       isCommandPending: source.isTaskCommandPending,
       failureMessage: source.taskCommandFailureMessage,
+      neighbors: neighbors,
     );
   }
 
@@ -285,6 +299,20 @@ final class TaskDetailViewModel implements Listenable {
     } else {
       _tasks.selectTask(taskId);
     }
+  }
+
+  /// Opens the previous task of the current ordering, resolved when the
+  /// control is used so a changed ordering never leads to a stale task. The
+  /// open task's pending inline edits are stored as it closes.
+  void selectPrevious() {
+    final target = state?.previousTaskId;
+    if (target != null) select(target);
+  }
+
+  /// Opens the next task of the current ordering; see [selectPrevious].
+  void selectNext() {
+    final target = state?.nextTaskId;
+    if (target != null) select(target);
   }
 
   void back() {

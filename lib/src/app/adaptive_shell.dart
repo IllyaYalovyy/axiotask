@@ -322,12 +322,19 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     }
   }
 
+  /// Opens the task the result matched: a subtask hit opens the subtask, in
+  /// its parent's context, so Back returns to the parent's details before the
+  /// collection. Search stays open if the task is no longer cached.
   void _openSearchResult(TaskSearchResult result) {
+    final taskId = result.match.id;
     _suppressNavigationSync = true;
-    _navigation.removeRoute(const SearchRoute());
-    widget.viewModel.selectTask(result.parent.id);
-    _navigation.openTaskDetail(result.parent.id);
-    _suppressNavigationSync = false;
+    try {
+      if (!widget.viewModel.openSearchResult(taskId)) return;
+      _navigation.removeRoute(const SearchRoute());
+      _navigation.openTaskDetail(taskId);
+    } finally {
+      _suppressNavigationSync = false;
+    }
   }
 
   /// Starts a capture: on phones by opening the composer, on desktop by
