@@ -4,7 +4,7 @@
 // failed the 2026-11-15 native audit of v1.5.6: phones showed a desktop-style
 // capture bar at the top, with no floating add button and no notes. These
 // contracts drive the real shell over the isolated SQLite fixture by touch:
-// the floating add button opens and focuses the on-demand top composer,
+// the floating add button opens and focuses the bottom-sheet composer,
 // Back lowers the keyboard and then closes it, Cancel creates nothing, and
 // title plus multiline notes persist in the selected list. Controls are
 // measured above a keyboard at phone widths, in both orientations and at 2x
@@ -183,9 +183,8 @@ void main() {
     );
     expect(created.map((task) => task.id).toSet(), hasLength(2));
     await _lowerKeyboard(t);
-    await t.binding.handlePopRoute();
     await t.pumpAndSettle();
-    expect(_composer, findsNothing);
+    expect(_composer, findsNothing, reason: 'Save already closed the sheet');
     expect(find.text('Captured with notes').hitTestable(), findsOneWidget);
   });
 }
