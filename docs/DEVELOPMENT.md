@@ -18,6 +18,74 @@ verification commands are maintained in the repository [README](../README.md).
 No effort is allocated to Windows, macOS, iOS, web, distribution packaging,
 hosted CI, or release automation.
 
+## Local Android emulator reliability
+
+On the Fedora 45 / AMD Radeon Vega host with Emulator 37.2.13 and the API 36
+Google APIs x86_64 image, use the repository launcher in a dedicated terminal:
+
+```bash
+bash scripts/android_emulator.sh
+# Optional visible window (the headless configuration was validated):
+EMULATOR_WINDOW=1 bash scripts/android_emulator.sh
+```
+
+It uses AVD `axiotask_api36`, port 5580, KVM, 2 CPU cores, 2048 MiB guest RAM,
+host GLES, disabled Vulkan, and a cold boot without loading or saving snapshots.
+Supply another AVD and even console port as positional arguments. Run it outside
+restricted agent sandboxes: those can hide `/dev/kvm` and host ADB even when KVM
+is installed and usable. Keep the launcher alive in its terminal; for unattended
+jobs use a process supervisor rather than a background child of a short-lived
+tool session.
+
+The launcher uses `-read-only`: installs and app changes are discarded when the
+emulator exits, preserving the underlying AVD. This is intended for reproducible
+testing, not persistent manual development. Do not wipe AVD data as a renderer
+workaround. Before tests, check that this prints `1` (ADB connectivity alone does
+not mean Android finished booting):
+
+```bash
+adb -s emulator-5580 shell getprop sys.boot_completed
+dart run tool/android_regression/run.dart --subset baseline \
+  --device emulator-5580 --artifacts test-results/android-regression-baseline
+# Stop this test instance after use:
+adb -s emulator-5580 emu kill
+```
+
+The November 17–18, 2026 investigation found repeated host-process SIGSEGVs
+with `-gpu swiftshader_indirect`, and SIGILLs with `-gpu swangle_indirect`.
+The failing thread was `RenderThread`; one symbolized trace entered
+`gfxstream::gles2_decoder_context_t::decode` in `libgfxstream_backend.so`.
+Failures also occurred with `-no-snapshot` and `-read-only`, so neither snapshot
+loading nor writable AVD state is necessary to trigger them. These are emulator
+renderer crashes, distinct from a Dart exception or Android app crash. The
+precise upstream defect has not been isolated. KVM passed the host acceleration
+check, and the inspected OOM journal did not report an OOM kill.
+
+The workaround changes both renderer and Vulkan availability, so it does not
+establish which change is sufficient. Google documents disabling Vulkan with
+[`-feature -Vulkan`](https://developer.android.com/studio/run/emulator-troubleshooting)
+and the supported [GPU modes](https://developer.android.com/studio/run/emulator-acceleration).
+Do not assume software rendering is safer on this particular host: both of the
+previous indirect software configurations have recorded crashes.
+
+Validation on November 18: the headless host-GLES/Vulkan-disabled configuration
+booted in 44.4 seconds and completed all 17 cases in
+`integration_test/android_regression/baseline_test.dart` (80 seconds of tests,
+17 clean teardowns), including screenshot capture, landscape rotation, dialogs,
+and text entry. The direct Flutter test process exited 0. A second cold boot
+through the repository launcher completed in 36.5 seconds with
+`sys.boot_completed=1`; both test instances were then stopped. This is a local
+renderer stability check, not the full release gate or a long-duration soak.
+Investigation logs are in `/tmp/axiotask-emulator-host-novulkan.log` and
+`/tmp/axiotask-emulator-baseline.log`; `/tmp` artifacts are temporary.
+
+Run Flutter integration commands serially within one checkout, even when their
+target devices differ. They share `build/test/listener_0.dart`: overlapping
+Android and Linux builds can compile the wrong test or remove the other build's
+entry point. Use separate checkouts and build directories if parallel execution
+is needed. Native SQLite writes must be awaited by observable state or persisted
+outcomes; `pumpAndSettle` only waits for scheduled frames.
+
 ## Locked scaffold toolchain and dependencies
 
 The S00 lock was resolved on Fedora 43 with Android SDK 36.1.0, Build-Tools

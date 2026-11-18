@@ -129,10 +129,20 @@ void main() {
 
     await tester.ensureVisible(find.byTooltip('Complete selected task'));
     await tester.tap(find.byTooltip('Complete selected task'));
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          find.byTooltip('Reopen selected task').evaluate().isNotEmpty,
+    );
     expect(find.byTooltip('Reopen selected task'), findsOneWidget);
     await tester.tap(find.byTooltip('Reopen selected task'));
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          find.byTooltip('Complete selected task').evaluate().isNotEmpty,
+    );
     expect(find.byTooltip('Complete selected task'), findsOneWidget);
 
     await tester.tap(find.byTooltip('Edit task content'));
@@ -143,7 +153,12 @@ void main() {
     );
     await tester.enterText(notes, '離線ノート 🌍\nsecond exact line');
     await tester.tap(find.widgetWithText(FilledButton, 'Save'));
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          find.byType(AlertDialog).evaluate().isEmpty,
+    );
 
     await tester.tap(find.widgetWithText(TextButton, 'Add subtask'));
     await tester.pumpAndSettle();
@@ -155,14 +170,24 @@ void main() {
       'Created Linux child',
     );
     await tester.tap(find.widgetWithText(FilledButton, 'Create'));
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          find.text('Created Linux child').evaluate().isNotEmpty,
+    );
     expect(find.text('Created Linux child'), findsOneWidget);
-    expect(find.textContaining('1 of 3 subtasks complete'), findsNWidgets(2));
+    expect(find.textContaining('2 of 3 subtasks complete'), findsNWidgets(2));
 
     await tester.tap(find.byKey(const Key('task-detail-due-action')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Next week'));
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          find.text('Date changed for 3 related tasks').evaluate().isNotEmpty,
+    );
     expect(find.text('Date changed for 3 related tasks'), findsOneWidget);
     expect(
       (await repository.watchTasks(TasksQuery(accountId: account)).first).tasks
@@ -192,13 +217,18 @@ void main() {
 
     expect(find.text('離線ノート 🌍\nsecond exact line'), findsOneWidget);
     expect(find.text('Created Linux child'), findsOneWidget);
-    expect(find.textContaining('1 of 3 subtasks complete'), findsNWidgets(2));
+    expect(find.textContaining('2 of 3 subtasks complete'), findsNWidgets(2));
     expect(find.text('Date changed for 3 related tasks'), findsOneWidget);
 
     final undo = find.widgetWithText(TextButton, 'Undo due changes');
     await tester.ensureVisible(undo);
     await tester.tap(undo);
-    await tester.pumpAndSettle();
+    await _waitFor(
+      tester,
+      () =>
+          !viewModel.state.isTaskCommandPending &&
+          find.text('Date changed for 3 related tasks').evaluate().isEmpty,
+    );
     expect(find.text('Date changed for 3 related tasks'), findsNothing);
     final restored =
         (await repository.watchTasks(TasksQuery(accountId: account)).first)
@@ -287,4 +317,16 @@ final class _RecordingExternalLinkLauncher implements ExternalLinkLauncher {
     launched.add(uri);
     return true;
   }
+}
+
+// Native SQLite work can complete after the last scheduled frame.
+Future<void> _waitFor(WidgetTester tester, bool Function() ready) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 15));
+  while (!ready()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('Timed out waiting for stored UI state');
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+  await tester.pumpAndSettle();
 }
