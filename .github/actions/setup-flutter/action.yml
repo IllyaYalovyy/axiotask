@@ -1,5 +1,9 @@
 name: Set up Axiotask Flutter
 description: Install the pinned SDK and Linux build dependencies
+inputs:
+  linux-dependencies:
+    description: Install native Linux build and desktop-test dependencies
+    default: 'true'
 runs:
   using: composite
   steps:
@@ -9,10 +13,27 @@ runs:
         channel: stable
         cache: true
     - name: Install Linux dependencies
+      if: inputs.linux-dependencies == 'true'
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev \
+        # Regional EC2 mirrors have stalled hosted runners during downloads.
+        # Keep Ubuntu's signing keys and suites, using its primary HTTPS mirror.
+        sudo python3 - <<'PY'
+        import pathlib, re
+        directory = pathlib.Path('/etc/apt/sources.list.d')
+        paths = [pathlib.Path('/etc/apt/sources.list'),
+                 *directory.glob('*.list'), *directory.glob('*.sources')]
+        for path in paths:
+            if path.is_file():
+                original = path.read_text()
+                updated = re.sub(r'https?://[A-Za-z0-9.-]*ec2\.archive\.ubuntu\.com/ubuntu/?',
+                                 'https://archive.ubuntu.com/ubuntu/', original)
+                if updated != original:
+                    path.write_text(updated)
+        PY
+        apt_options=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
+        sudo apt-get "${apt_options[@]}" update
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get "${apt_options[@]}" install -y clang cmake ninja-build pkg-config libgtk-3-dev \
           libsecret-1-dev libstdc++-14-dev liblzma-dev xvfb dbus-x11 \
           gnome-keyring libgl1-mesa-dri desktop-file-utils appstream ripgrep
     - name: Resolve locked dependencies

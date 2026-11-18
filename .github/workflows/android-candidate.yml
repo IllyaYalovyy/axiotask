@@ -22,6 +22,8 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: ./.github/actions/setup-flutter
+        with:
+          linux-dependencies: 'false'
       - name: Configure the registered signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

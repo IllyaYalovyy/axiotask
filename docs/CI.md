@@ -8,6 +8,10 @@ does not emit a separate push event for each intermediate commit.
 The workflow uses Ubuntu 24.04 and Flutter 3.50.0 with locked Dart dependencies.
 Update `.github/actions/setup-flutter/action.yml` when upgrading Flutter, together
 with the SDK constraints and reviewed golden baselines.
+Android-only jobs skip the Linux desktop dependency installation. Linux jobs
+use Ubuntu's primary HTTPS archive in place of regional EC2 mirrors and bound
+package connection/download waits with retries, so a stalled mirror cannot
+leave a download waiting indefinitely.
 
 ## Automated checks
 
