@@ -89,7 +89,8 @@ def main():
 
     def launch():
         adb('shell', 'am', 'force-stop', package)
-        adb('shell', 'am', 'start', '-W', '-n', package + '/.MainActivity')
+        adb('shell', 'am', 'start', '-W', '-n',
+            package + '/dev.axiotask.axiotask.MainActivity')
 
     def node(label):
         deadline = time.monotonic() + 15
