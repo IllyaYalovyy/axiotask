@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../data/search/supported_task_search_repository.dart';
 import '../domain/commands/task_commands.dart';
+import '../domain/export/view_export.dart';
 import '../domain/model/bulk_operations.dart';
 import '../domain/model/preferences.dart';
 import '../domain/model/search.dart';
@@ -1894,6 +1895,8 @@ enum _CollectionMenuAction {
   deleteList,
   clearCompleted,
   toggleShowCompleted,
+  exportMarkdown,
+  exportCsv,
 }
 
 final class _NormalCollectionCommandBar extends StatelessWidget {
@@ -1923,12 +1926,14 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
         viewModel.tasksRepository is DestructiveTaskOperationsRepository &&
         hasList &&
         clearCompletedCount > 0;
+    final canExport = viewModel.viewExportDestination != null;
     final hasMenuActions =
         (hasList && !state.isTaskCommandPending) ||
         viewModel.tasksRepository is BulkTasksRepository ||
         canManageLists ||
         canToggleCompleted ||
-        canClearCompleted;
+        canClearCompleted ||
+        canExport;
 
     return FocusTraversalGroup(
       key: const Key('normal-collection-command-bar'),
@@ -1994,6 +1999,7 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
                   canManageLists: canManageLists,
                   canToggleCompleted: canToggleCompleted,
                   canClearCompleted: canClearCompleted,
+                  canExport: canExport,
                 ),
               ),
             ),
@@ -2008,6 +2014,7 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
     required bool canManageLists,
     required bool canToggleCompleted,
     required bool canClearCompleted,
+    required bool canExport,
   }) => <PopupMenuEntry<_CollectionMenuAction>>[
     if (hasList)
       PopupMenuItem<_CollectionMenuAction>(
@@ -2068,6 +2075,22 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
           style: TextStyle(color: Theme.of(context).colorScheme.error),
         ),
       ),
+    if (canExport) ...<PopupMenuEntry<_CollectionMenuAction>>[
+      const PopupMenuDivider(),
+      // Exports what the collection shows: its view, filter and sort.
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-export-markdown'),
+        value: _CollectionMenuAction.exportMarkdown,
+        enabled: !state.isExportPending,
+        child: const Text('Export as Markdown…'),
+      ),
+      PopupMenuItem<_CollectionMenuAction>(
+        key: const Key('collection-export-csv'),
+        value: _CollectionMenuAction.exportCsv,
+        enabled: !state.isExportPending,
+        child: const Text('Export as CSV…'),
+      ),
+    ],
   ];
 
   void _handleAction(BuildContext context, _CollectionMenuAction action) {
@@ -2093,6 +2116,10 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
             !state.selectedViewPreferences.showCompleted,
           ),
         );
+      case _CollectionMenuAction.exportMarkdown:
+        unawaited(viewModel.exportCurrentView(ViewExportFormat.markdown));
+      case _CollectionMenuAction.exportCsv:
+        unawaited(viewModel.exportCurrentView(ViewExportFormat.csv));
     }
   }
 }
@@ -2125,7 +2152,10 @@ final class _TransientTaskFeedbackSlot extends StatelessWidget {
     final currentFeedback = feedback;
     final label = switch (currentFeedback) {
       TransientTaskFeedback(
-        kind: TransientTaskFeedbackKind.invalidDrop,
+        kind: TransientTaskFeedbackKind.invalidDrop ||
+            TransientTaskFeedbackKind.exported ||
+            TransientTaskFeedbackKind.exportCancelled ||
+            TransientTaskFeedbackKind.exportFailed,
         :final message?,
       ) =>
         message,
@@ -2139,11 +2169,16 @@ final class _TransientTaskFeedbackSlot extends StatelessWidget {
       _ => null,
     };
     if (label == null) return const SizedBox.shrink();
+    final isError = switch (currentFeedback!.kind) {
+      TransientTaskFeedbackKind.invalidDrop ||
+      TransientTaskFeedbackKind.exportFailed => true,
+      _ => false,
+    };
     return Semantics(
       liveRegion: true,
       child: Material(
         key: const Key('transient-task-feedback'),
-        color: currentFeedback!.kind == TransientTaskFeedbackKind.invalidDrop
+        color: isError
             ? Theme.of(context).colorScheme.errorContainer
             : Theme.of(context).colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
@@ -2152,8 +2187,7 @@ final class _TransientTaskFeedbackSlot extends StatelessWidget {
           child: Text(
             label,
             style: TextStyle(
-              color:
-                  currentFeedback.kind == TransientTaskFeedbackKind.invalidDrop
+              color: isError
                   ? Theme.of(context).colorScheme.onErrorContainer
                   : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
@@ -2789,10 +2823,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
           child: Builder(
             builder: (context) {
               final titleText = Text(
-                switch (state.selectedView) {
-                  SmartTaskView(:final smartView) => smartView.title,
-                  TaskListView() => state.selectedTaskList?.title ?? 'Tasks',
-                },
+                state.selectedViewTitle,
                 maxLines: narrow ? 2 : 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.titleLarge
@@ -3016,9 +3047,13 @@ final class _TaskCollectionState extends State<_TaskCollection> {
               Positioned(
                 top: 20,
                 left: 24,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 300),
-                  child: _TransientTaskFeedbackSlot(feedback: feedback),
+                // The feedback has no controls; on a phone it overlaps the
+                // header, so taps reach the collection actions beneath it.
+                child: IgnorePointer(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 300),
+                    child: _TransientTaskFeedbackSlot(feedback: feedback),
+                  ),
                 ),
               ),
             if (floatingAdd)

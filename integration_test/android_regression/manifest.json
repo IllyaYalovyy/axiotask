@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 10,
+  "manifest_version": 11,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -275,9 +275,10 @@
       "flow": "Export current view",
       "audit_classification": "Removed feature",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/export_test.dart",
       "owner": "android-export",
       "subsets": [

@@ -426,8 +426,36 @@ void main() {
         projected.tasks.single.webViewLink,
         Uri.parse('https://example.invalid/view#task/synthetic'),
       );
+      expect(projected.tasks.single.completedAt, updated);
+      expect(projected.tasks.single.completedAt!.isUtc, isTrue);
     },
   );
+
+  test('a task without a remote base projects no completion instant', () async {
+    final account = AccountId(
+      await database.createAccount('synthetic-no-task-base'),
+    );
+    final list = await cache.putTaskList(
+      accountId: account,
+      remoteId: const TaskListRemoteId('no-base-list'),
+      title: 'Cached list',
+    );
+    await cache.putTask(
+      accountId: account,
+      taskListId: list,
+      remoteId: const TaskRemoteId('no-base-task'),
+      title: 'Completed locally',
+      position: '0001',
+      status: TaskStatus.completed,
+    );
+
+    final projected = await repository
+        .watchTasks(TasksQuery(accountId: account))
+        .first;
+
+    expect(projected.tasks.single.status, TaskStatus.completed);
+    expect(projected.tasks.single.completedAt, isNull);
+  });
 
   test(
     'stable local and separate remote IDs survive close and reopen',

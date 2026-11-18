@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import '../core/diagnostics/diagnostics.dart';
 import '../core/failure.dart';
@@ -16,6 +17,8 @@ import '../data/database/sync_health_repository.dart';
 import '../data/database/sync_settings_repository.dart';
 import '../data/database/task_lists_repository.dart';
 import '../data/database/tasks_repository.dart';
+import '../data/export/android_document_export_destination.dart';
+import '../data/export/file_view_export_destination.dart';
 import '../data/links/url_launcher_adapter.dart';
 import '../data/preferences/device_preferences.dart';
 import '../data/preferences/preferences_repository.dart';
@@ -26,6 +29,7 @@ import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
 import '../domain/repository/preferences_repository.dart';
 import '../domain/repository/tasks_repository.dart';
+import '../domain/repository/view_export_destination.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../sync/coordinator/sync_coordinator.dart';
 import '../sync/engine.dart';
@@ -274,6 +278,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           resumeSyncRequested: coordinator.resume,
           diagnostics: composition.diagnostics,
           externalLinkLauncher: const UrlLauncherAdapter(),
+          viewExportDestination: _platformViewExportDestination(),
         ),
         database: database,
         coordinator: coordinator,
@@ -596,3 +601,12 @@ const Failure _unexpectedAuthorizationFailure = Failure(
       'Google authorization failed unexpectedly. Open diagnostics '
       'for details and retry.',
 );
+
+/// The current-view export destination this platform supports: the Storage
+/// Access Framework document picker on Android, the native save dialog on
+/// Linux. Elsewhere no export is offered.
+ViewExportDestination? _platformViewExportDestination() {
+  if (Platform.isAndroid) return AndroidDocumentExportDestination();
+  if (Platform.isLinux) return const FileViewExportDestination();
+  return null;
+}

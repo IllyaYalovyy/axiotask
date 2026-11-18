@@ -1081,6 +1081,32 @@ run and a restart, and one Google copy after a declined insert is retried),
 that cannot be stored, single-flight repeated taps, failure then one-copy
 retry, confirmation and Open copy) and the Duplicate widget tests in
 `test/features/tasks/adaptive_shell_test.dart`.
+Case 15 (export of the current view) is corrected by
+`integration_test/android_regression/export_test.dart`. The v1.5.3 contract
+comes from that tag's `lib/src/app/task_export.dart` and
+`test/app/task_export_test.dart`. The case keeps the audit's assertion (a
+hit-testable Export entry in the collection actions), then exports by touch
+through the production Android destination: `MainActivity` writes the bytes
+through `ContentResolver` on the document-export channel. The system "Save
+to" picker belongs to another app, so only the chosen location is scripted:
+a file URI in the fixture directory, `null` for a dismissed picker, or a
+missing provider for a write error. Each written file is read back with the
+independent parsers in `test/support/export_parsers.dart`. The list in manual
+order without completed tasks must export as a Markdown checklist with its
+nested subtask, dates and notes. The same list by title with completed tasks
+shown must export as CSV with completed rows and subtasks, quoted commas and
+quotes, multiline Unicode notes and parent titles, and with `completed_at`
+holding the stored completion instant of the completed task that has one. The All smart view must
+name each task's list, and an empty list must say `_No tasks._`. A cancelled
+or failing destination must write no file and show its message. SQLite must
+hold every task unchanged with no publication intent. Host coverage:
+`test/domain/view_export_test.dart` (format contract, escaping, scope and
+leaks), `test/data/export/view_export_destination_test.dart` (channel calls,
+cancellation, picker and write failures with discard, desktop atomic writes)
+and `test/features/tasks/view_export_test.dart` (list, smart view, completed
+filter, empty view, single-flight, snapshot timing, disposal, phone menu and
+feedback). Exports are human-readable snapshots, separate from the account
+backup, which they never read or change.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

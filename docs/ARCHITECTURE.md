@@ -352,6 +352,19 @@ or the synchronization engine. The accepted
 defines the format boundary, existing-record-wins behavior, identity limits,
 durable import manifest, and local/remote failure semantics.
 
+Current-view export is a separate, read-only path for people rather than for
+restore. The collection actions offer “Export as Markdown…” and “Export as
+CSV…”; the pure serializer in `domain/export/view_export.dart` turns the
+displayed rows (view, completed filter and sort, with their subtasks) into a
+Markdown checklist or a fixed-header RFC 4180 CSV, following the v1.5.3
+contract; CSV `completed_at` carries the completion instant stored with the
+task's last observed Google state. `TasksViewModel.exportCurrentView` snapshots the state and hands the
+document to the `ViewExportDestination` port: the Storage Access Framework
+document picker and a `ContentResolver` write through `MainActivity` on
+Android, and the native save dialog with an atomic write on Linux. Export never
+reads the backup projection, writes task or sync state, or offers a path back
+in.
+
 S30A fixes the export half of that boundary as `axiotask.accountBackup` version
 1 JSON. The encoder accepts only a typed backup projection, never database,
 authorization, synchronization, diagnostic, or preference objects. Its exact

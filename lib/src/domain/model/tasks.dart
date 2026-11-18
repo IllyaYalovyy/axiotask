@@ -152,6 +152,7 @@ final class CachedTask {
     required this.status,
     required this.due,
     this.webViewLink,
+    this.completedAt,
   });
 
   final TaskId id;
@@ -165,6 +166,11 @@ final class CachedTask {
   final TaskDate? due;
   final Uri? webViewLink;
 
+  /// Google's completion instant (UTC) from the last observed remote state,
+  /// or `null` when none is stored. It can lag a local status change until
+  /// the change is published.
+  final DateTime? completedAt;
+
   CachedTask copyWith({
     TaskListId? taskListId,
     Object? parentTaskId = _notProvided,
@@ -173,6 +179,7 @@ final class CachedTask {
     TaskStatus? status,
     Object? due = _notProvided,
     Object? webViewLink = _notProvided,
+    Object? completedAt = _notProvided,
   }) => CachedTask(
     id: id,
     accountId: accountId,
@@ -188,6 +195,9 @@ final class CachedTask {
     webViewLink: identical(webViewLink, _notProvided)
         ? this.webViewLink
         : webViewLink as Uri?,
+    completedAt: identical(completedAt, _notProvided)
+        ? this.completedAt
+        : completedAt as DateTime?,
   );
 
   @override
@@ -202,7 +212,8 @@ final class CachedTask {
       notes == other.notes &&
       status == other.status &&
       due == other.due &&
-      webViewLink == other.webViewLink;
+      webViewLink == other.webViewLink &&
+      completedAt == other.completedAt;
 
   @override
   int get hashCode => Object.hash(
@@ -216,6 +227,7 @@ final class CachedTask {
     status,
     due,
     webViewLink,
+    completedAt,
   );
 }
 

@@ -1518,6 +1518,7 @@ final class DatabaseTasksRepository
         t.status AS task_status,
         t.due_epoch_day AS task_due_epoch_day,
         remote_task.web_view_link AS task_web_view_link,
+        remote_task.completed_at AS task_completed_at,
         (
           SELECT d.desired_previous_task_id
           FROM desired_states d
@@ -1806,6 +1807,7 @@ CachedTasksSnapshot _mapSnapshot(AccountId accountId, List<QueryRow> rows) {
         webViewLink: _mapAbsoluteUri(
           row.readNullable<String>('task_web_view_link'),
         ),
+        completedAt: row.readNullable<DateTime>('task_completed_at')?.toUtc(),
       ),
     );
     if (row.readNullable<int>('desired_order_sequence') case final sequence?) {

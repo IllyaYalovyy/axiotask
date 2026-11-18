@@ -8,6 +8,7 @@ import '../../core/failure.dart';
 import '../../core/outcome.dart';
 import '../../domain/commands/task_commands.dart';
 import '../../domain/commands/task_list_commands.dart';
+import '../../domain/export/view_export.dart';
 import '../../domain/model/bulk_operations.dart';
 import '../../domain/model/preferences.dart';
 import '../../domain/model/tasks.dart';
@@ -20,11 +21,19 @@ import '../../domain/repository/external_link_launcher.dart';
 import '../../domain/repository/preferences_repository.dart';
 import '../../domain/repository/task_lists_repository.dart';
 import '../../domain/repository/tasks_repository.dart';
+import '../../domain/repository/view_export_destination.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/health/sync_health_repository.dart';
 import 'task_content_autosave.dart';
 
-enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess, duplicated }
+enum TransientTaskFeedbackKind {
+  invalidDrop,
+  bulkSuccess,
+  duplicated,
+  exported,
+  exportCancelled,
+  exportFailed,
+}
 
 /// A short-lived result which is intentionally not restored from durable state.
 ///
@@ -33,6 +42,16 @@ enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess, duplicated }
 final class TransientTaskFeedback {
   const TransientTaskFeedback.invalidDrop(this.message)
     : kind = TransientTaskFeedbackKind.invalidDrop,
+      bulkOperation = null,
+      duplicate = null;
+
+  /// The outcome of a current-view export: written, cancelled or failed.
+  const TransientTaskFeedback.export(this.kind, String this.message)
+    : assert(
+        kind == TransientTaskFeedbackKind.exported ||
+            kind == TransientTaskFeedbackKind.exportCancelled ||
+            kind == TransientTaskFeedbackKind.exportFailed,
+      ),
       bulkOperation = null,
       duplicate = null;
 
@@ -72,6 +91,7 @@ final class TasksViewState {
     this.isTaskCommandPending = false,
     this.isPreferenceCommandPending = false,
     this.isBulkCommandPending = false,
+    this.isExportPending = false,
     this.bulkSelectedTaskIds = const <TaskId>{},
     this.selectedSmartView,
     this.selectedTaskListId,
@@ -103,6 +123,9 @@ final class TasksViewState {
   final bool isTaskCommandPending;
   final bool isPreferenceCommandPending;
   final bool isBulkCommandPending;
+
+  /// A current-view export is choosing or writing its destination.
+  final bool isExportPending;
   final Set<TaskId> bulkSelectedTaskIds;
   final SmartView? selectedSmartView;
   final TaskListId? selectedTaskListId;
@@ -156,6 +179,12 @@ final class TasksViewState {
 
   CachedTaskList? get selectedTaskList =>
       _firstWhereOrNull(taskLists, (value) => value.id == selectedTaskListId);
+
+  /// The heading of the selected collection: its smart view or list name.
+  String get selectedViewTitle => switch (selectedView) {
+    SmartTaskView(:final smartView) => smartView.title,
+    TaskListView() => selectedTaskList?.title ?? 'Tasks',
+  };
 
   TaskViewProjection get visibleProjection => projectTaskView(
     tasks: tasks,
@@ -215,6 +244,7 @@ final class TasksViewState {
     bool? isTaskCommandPending,
     bool? isPreferenceCommandPending,
     bool? isBulkCommandPending,
+    bool? isExportPending,
     Set<TaskId>? bulkSelectedTaskIds,
     Object? selectedSmartView = _notProvided,
     Object? selectedTaskListId = _notProvided,
@@ -246,6 +276,7 @@ final class TasksViewState {
     isPreferenceCommandPending:
         isPreferenceCommandPending ?? this.isPreferenceCommandPending,
     isBulkCommandPending: isBulkCommandPending ?? this.isBulkCommandPending,
+    isExportPending: isExportPending ?? this.isExportPending,
     bulkSelectedTaskIds: bulkSelectedTaskIds ?? this.bulkSelectedTaskIds,
     selectedSmartView: identical(selectedSmartView, _notProvided)
         ? this.selectedSmartView
@@ -310,6 +341,7 @@ final class TasksViewModel extends ChangeNotifier {
     this.resumeSyncRequested,
     this.diagnostics,
     this.externalLinkLauncher = const UnavailableExternalLinkLauncher(),
+    this.viewExportDestination,
   }) : clock = clock ?? SystemClock(),
        calendarScheduler =
            calendarScheduler ??
@@ -361,6 +393,10 @@ final class TasksViewModel extends ChangeNotifier {
   final Future<void> Function()? resumeSyncRequested;
   final DiagnosticSink? diagnostics;
   final ExternalLinkLauncher externalLinkLauncher;
+
+  /// Where current-view Markdown/CSV exports are saved; without one the
+  /// export actions are not offered.
+  final ViewExportDestination? viewExportDestination;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
@@ -380,6 +416,7 @@ final class TasksViewModel extends ChangeNotifier {
   Future<void>? _taskCommandInFlight;
   Future<void>? _preferenceCommandInFlight;
   Future<void>? _bulkCommandInFlight;
+  Future<void>? _exportInFlight;
   ScheduledTimer? _calendarTimer;
   ScheduledTimer? _transientFeedbackTimer;
   ScheduledTimer? _completionUndoTimer;
@@ -667,6 +704,86 @@ final class TasksViewModel extends ChangeNotifier {
     } on Object {
       return false;
     }
+  }
+
+  /// Exports the collection exactly as displayed — its view, completed filter
+  /// and sort, with each shown task's subtasks — as [format], and saves it
+  /// where the user chooses. Only reads state: no task, preference or sync
+  /// state changes, whether the export is saved, cancelled or fails.
+  Future<void> exportCurrentView(ViewExportFormat format) {
+    final existing = _exportInFlight;
+    if (existing != null) return existing;
+    final destination = viewExportDestination;
+    if (destination == null) return Future<void>.value();
+    // The snapshot is taken now, so the file holds what the user was looking
+    // at when they chose to export, even if a sync lands while they pick.
+    final state = _state;
+    final document = buildViewExport(
+      title: state.selectedViewTitle,
+      rows: state.visibleTasks,
+      tasks: state.tasks,
+      taskLists: state.taskLists,
+      showCompleted: state.selectedViewPreferences.showCompleted,
+      format: format,
+      today: state.today,
+    );
+    final operation = _performExport(destination, document);
+    _exportInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _performExport(
+    ViewExportDestination destination,
+    ViewExportDocument document,
+  ) async {
+    _replaceState(_state.copyWith(isExportPending: true));
+    TransientTaskFeedback feedback;
+    try {
+      final result = await destination.save(document);
+      feedback = switch (result) {
+        ViewExportSaved(:final displayName) => TransientTaskFeedback.export(
+          TransientTaskFeedbackKind.exported,
+          'Exported ${_taskCountPhrase(document.taskCount)} as '
+          '${document.format.label} to $displayName.',
+        ),
+        ViewExportCancelled() => const TransientTaskFeedback.export(
+          TransientTaskFeedbackKind.exportCancelled,
+          'Export canceled. No file was written.',
+        ),
+      };
+      _recordUi(switch (result) {
+        ViewExportSaved() => 'ui.view_export_saved',
+        ViewExportCancelled() => 'ui.view_export_cancelled',
+      }, DiagnosticEventKind.transition);
+    } on Object catch (error) {
+      final failure = error is ViewExportDestinationException
+          ? error.failure
+          : ViewExportFailure.writeFailed;
+      _recordUi(
+        'ui.view_export_failed',
+        DiagnosticEventKind.failure,
+        failureCode: 'view_export.${failure.name}',
+      );
+      feedback = TransientTaskFeedback.export(
+        TransientTaskFeedbackKind.exportFailed,
+        switch (failure) {
+          ViewExportFailure.unavailable =>
+            'Export is not available on this device. Your tasks are '
+                'unchanged.',
+          ViewExportFailure.pickerFailed =>
+            'The save location could not be opened. Nothing was exported; '
+                'your tasks are unchanged.',
+          ViewExportFailure.writeFailed =>
+            'The export could not be written to the chosen location. Your '
+                'tasks are unchanged.',
+        },
+      );
+    } finally {
+      _exportInFlight = null;
+    }
+    if (_disposed) return;
+    _replaceState(_state.copyWith(isExportPending: false));
+    _showTransientFeedback(feedback);
   }
 
   Future<void> refresh() {
@@ -1660,6 +1777,8 @@ final class TasksViewModel extends ChangeNotifier {
     super.dispose();
   }
 }
+
+String _taskCountPhrase(int count) => count == 1 ? '1 task' : '$count tasks';
 
 String _taskFailureMessage(String code) => switch (code) {
   'task.title_too_long' => 'Task titles can contain at most 1024 characters.',

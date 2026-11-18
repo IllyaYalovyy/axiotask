@@ -56,6 +56,7 @@ const _correctedAuditFailures = <String, String>{
   '09_date_calendar': 'android-task-details',
   '11_inline_detail_edit': 'android-task-details',
   '14_duplicate_action': 'android-task-details',
+  '15_export_action': 'android-export',
   '17_search_open_result': 'android-search-navigation',
   '20_phone_add_affordance': 'android-capture-composer',
   '22_touch_target_size': 'android-task-row-actions',

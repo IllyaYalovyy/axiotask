@@ -13,6 +13,7 @@ import 'package:axiotask/src/data/preferences/device_preferences.dart';
 import 'package:axiotask/src/data/preferences/preferences_repository.dart';
 import 'package:axiotask/src/data/preferences/relational_preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/domain/repository/view_export_destination.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
@@ -39,6 +40,12 @@ const _productionPackageSegment = '/com.axiotask.app/';
 /// Phone portrait size used when the suite runs on a desktop host.
 const _hostPhoneSize = Size(412, 900);
 
+/// Builds a case's current-view export destination over its private fixture
+/// [directory].
+typedef ExportDestinationFactory = ViewExportDestination Function(
+  Directory directory,
+);
+
 typedef RegressionBody = Future<void> Function(
   WidgetTester tester,
   RegressionFixture fixture,
@@ -59,6 +66,7 @@ void regressionCase(
   CaseLabel label = CaseLabel.working,
   RegressionSeed seed = const RegressionSeed(),
   bool phoneOnHost = false,
+  ExportDestinationFactory? exportDestination,
 }) {
   testWidgets(id, (tester) async {
     final teardown = _Teardown(id);
@@ -74,7 +82,11 @@ void regressionCase(
           () async => debugDefaultTargetPlatformOverride = null,
         );
       }
-      fixture = await RegressionFixture.open(id, seed: seed);
+      fixture = await RegressionFixture.open(
+        id,
+        seed: seed,
+        exportDestination: exportDestination,
+      );
       teardown.add('database and fixture files', fixture.close);
       _emit(
         EnvironmentEvent(
@@ -163,6 +175,7 @@ final class RegressionFixture {
     required this.extraTasks,
     required this.openChildren,
     required this.completedChildren,
+    required this.viewExportDestination,
   });
 
   final String caseId;
@@ -184,6 +197,9 @@ final class RegressionFixture {
   final List<TaskId> extraTasks;
   final List<TaskId> openChildren;
   final List<TaskId> completedChildren;
+
+  /// The case's export destination; without one no export is offered.
+  final ViewExportDestination? viewExportDestination;
   late TasksViewModel model;
 
   /// Number of refresh requests the UI issued; nothing reaches Google.
@@ -195,6 +211,7 @@ final class RegressionFixture {
   static Future<RegressionFixture> open(
     String caseId, {
     RegressionSeed seed = const RegressionSeed(),
+    ExportDestinationFactory? exportDestination,
   }) async {
     final root = Platform.isAndroid
         ? await getTemporaryDirectory()
@@ -212,7 +229,13 @@ final class RegressionFixture {
       _databaseFile(directory, caseId),
     );
     try {
-      return await _seed(caseId, directory, database, seed);
+      return await _seed(
+        caseId,
+        directory,
+        database,
+        seed,
+        exportDestination?.call(directory),
+      );
     } catch (_) {
       await database.close();
       await directory.delete(recursive: true);
@@ -225,6 +248,7 @@ final class RegressionFixture {
     Directory directory,
     AppDatabase database,
     RegressionSeed seed,
+    ViewExportDestination? viewExportDestination,
   ) async {
     final account = AccountId(
       await database.createAccount('regression-synthetic-$caseId'),
@@ -352,6 +376,7 @@ final class RegressionFixture {
       extraTasks: extraTasks,
       openChildren: openChildren,
       completedChildren: completedChildren,
+      viewExportDestination: viewExportDestination,
     );
     fixture.model = fixture._createModel();
     return fixture;
@@ -368,6 +393,7 @@ final class RegressionFixture {
     clock: clock,
     preferencesRepository: preferences,
     refreshRequested: () async => refreshRequests += 1,
+    viewExportDestination: viewExportDestination,
   );
 
   /// Restarts the application over the same SQLite file, as a process exit
