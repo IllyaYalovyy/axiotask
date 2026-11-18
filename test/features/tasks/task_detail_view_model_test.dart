@@ -18,6 +18,45 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'touch reorder accepts siblings only and uses shared move intent',
+    () async {
+      final repository = _TasksRepository();
+      final tasks = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: repository,
+        syncHealthRepository: const _HealthRepository(),
+      );
+      addTearDown(tasks.dispose);
+      tasks.start();
+      repository.snapshots.add(_snapshot);
+      await pumpEventQueue();
+      tasks.selectTaskList(const TaskListId(7));
+      tasks.selectTask(const TaskId(11));
+      final detail = TaskDetailViewModel.fromTasks(tasks);
+      await detail.reorderChild(
+        const TaskId(14),
+        const TaskId(12),
+        after: false,
+      );
+      await detail.reorderChild(
+        const TaskId(12),
+        const TaskId(12),
+        after: true,
+      );
+      expect(repository.applied, isEmpty);
+      await detail.reorderChild(
+        const TaskId(13),
+        const TaskId(12),
+        after: false,
+      );
+      final move = repository.applied.single as MoveTaskCommand;
+      expect(move.taskId, const TaskId(13));
+      expect(move.parentTaskId, const TaskId(11));
+      expect(move.previousTaskId, isNull);
+    },
+  );
+
+  test(
     'projects ordered direct children, progress, and valid parents',
     () async {
       final repository = _TasksRepository();

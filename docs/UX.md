@@ -1,5 +1,22 @@
 # UX direction
 
+## Android touch acceptance
+
+The v1.5.3 behavior basis and November 15 regression audit are maintained as
+36 numbered flows plus four findings in the Android regression manifest.
+Task-row long press selects, horizontal swipes complete or schedule, and the
+48 dp drag handle reorders siblings in manual-order phone layouts. Non-manual
+sorts omit the handle; row gestures retain their separate meanings. Pulling
+down refreshes through the same coordinator as the visible Refresh action,
+including empty and short lists, with progress and recoverable failure feedback.
+
+Stacked startup/sync/Undo feedback occupies at most 40% of a phone's available
+shell height and scrolls to its actions, leaving room for the task collection.
+Composer fields retain their input connection through short keyboard/rotation
+frames. Outcome tests cover persistence and Undo; viewport/text-scale screenshots
+supplement them. See [Testing](TESTING.md#android-takeover-qualification).
+Physical signed-candidate and comparison-image qualification remains separate.
+
 ## Trust before decoration
 
 The most important UX correction is truthful synchronization feedback. Cached

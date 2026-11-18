@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 13,
+  "manifest_version": 14,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -573,9 +573,10 @@
       "flow": "Pull to refresh",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/touch_gestures_test.dart",
       "owner": "android-touch-gestures",
       "subsets": [
@@ -587,9 +588,10 @@
       "flow": "Touch drag reordering",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/touch_gestures_test.dart",
       "owner": "android-touch-gestures",
       "subsets": [
@@ -661,9 +663,10 @@
       "finding": "Subtasks cannot be reordered by touch drag; case 35 covers only top-level task rows.",
       "owner": "android-touch-gestures",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/touch_gestures_test.dart",
       "subsets": [
         "complete"

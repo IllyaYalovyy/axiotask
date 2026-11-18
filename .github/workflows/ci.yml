@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: warn
 
   android-integration:
-    name: Android emulator native probes and regression baseline
+    name: Android emulator native probes and complete regression
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -115,7 +115,7 @@ jobs:
           script: |
             mkdir -p test-results
             bash -o pipefail -c 'flutter test --no-pub integration_test/database_native_probe_test.dart integration_test/preferences_native_smoke_test.dart -d emulator-5554 --reporter expanded 2>&1 | tee test-results/android-tests.log'
-            bash -o pipefail -c 'dart run tool/android_regression/run.dart --subset baseline --device emulator-5554 --artifacts test-results/android-regression-baseline --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" 2>&1 | tee test-results/android-regression-baseline.log'
+            bash -o pipefail -c 'dart run tool/android_regression/run.dart --subset complete --test-entrypoint integration_test/android_regression/complete_test.dart --device emulator-5554 --artifacts test-results/android-regression-complete --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" 2>&1 | tee test-results/android-regression-complete.log'
       - name: Upload Android evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -328,12 +328,37 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: distribution-${{ github.ref_name }}
           path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-evidence-${{ github.sha }}
+          path: qualification/acceptance
+      - name: Require a physical candidate qualification run
+        env:
+          QUALIFICATION_RUN_ID: ${{ vars.ANDROID_QUALIFICATION_RUN_ID }}
+        run: test -n "$QUALIFICATION_RUN_ID"
+      - name: Download physical signed-candidate evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: android-release-qualification-${{ github.sha }}
+          path: qualification/physical
+          run-id: ${{ vars.ANDROID_QUALIFICATION_RUN_ID }}
+          github-token: ${{ github.token }}
+      - name: Verify exact Android candidate qualification
+        run: |
+          apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          python3 scripts/check_android_qualification.py \
+            --acceptance qualification/acceptance/android-regression-complete/run.json \
+            --smoke qualification/physical/smoke.json \
+            --apk "dist/axiotask-${GITHUB_REF_NAME#v}.apk" \
+            --commit "$GITHUB_SHA" --apksigner "$apksigner" \
+            --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
       - name: Verify complete release assets
         run: |
           bash tool/release_guard.sh "${GITHUB_REF_NAME}"

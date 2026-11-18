@@ -10,6 +10,56 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 void main() {
+  testWidgets('phone composer survives a short keyboard rotation frame at 2x', (
+    tester,
+  ) async {
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    final model = _model();
+    final height = ValueNotifier(300.0);
+    addTearDown(height.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+          child: Center(
+            child: ValueListenableBuilder<double>(
+              valueListenable: height,
+              builder: (context, value, _) => SizedBox(
+                width: 744,
+                height: value,
+                child: PhoneComposerPanel(
+                  viewModel: model,
+                  lists: _lists,
+                  focusNode: focus,
+                  onCancel: () {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final title = find.byKey(const Key('quick-add-input'));
+    await tester.enterText(title, 'Draft survives rotation');
+    final fieldState = tester.state(title);
+    height.value = 70.5;
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(find.byKey(const Key('quick-add-submit')));
+    expect(
+      find.byKey(const Key('quick-add-submit')).hitTestable(),
+      findsOneWidget,
+    );
+    height.value = 300;
+    await tester.pumpAndSettle();
+    expect(tester.state(title), same(fieldState));
+    expect(
+      tester.widget<TextField>(title).controller!.text,
+      'Draft survives rotation',
+    );
+  });
+
   testWidgets(
     'concrete-list capture stays one compact row until options open',
     (tester) async {

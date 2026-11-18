@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../../domain/commands/task_commands.dart';
+import '../../domain/model/preferences.dart';
 import '../../domain/model/tasks.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/effective_due.dart';
@@ -258,6 +259,34 @@ final class TaskDetailViewModel implements Listenable {
     final detail = state;
     if (detail == null) return Future<void>.value();
     return _moveWithinSiblings(detail, detail.task.id, 1);
+  }
+
+  bool get canReorderChildren =>
+      _tasks.state.selectedViewPreferences.sort == ViewSort.manual &&
+      !_tasks.state.isTaskCommandPending;
+
+  Future<void> reorderChild(
+    TaskId source,
+    TaskId target, {
+    required bool after,
+  }) {
+    final detail = state;
+    if (detail == null || !canReorderChildren || source == target) {
+      return Future<void>.value();
+    }
+    final siblings = detail.children;
+    if (!siblings.any((t) => t.id == source) ||
+        !siblings.any((t) => t.id == target)) {
+      return Future<void>.value();
+    }
+    final remaining = siblings.where((t) => t.id != source).toList();
+    final index = remaining.indexWhere((t) => t.id == target) + (after ? 1 : 0);
+    return _tasks.moveTask(
+      taskId: source,
+      destinationTaskListId: detail.task.taskListId,
+      parentTaskId: detail.task.id,
+      previousTaskId: index == 0 ? null : remaining[index - 1].id,
+    );
   }
 
   Future<void> moveChildUp(TaskId childTaskId) {

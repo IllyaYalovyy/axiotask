@@ -10,6 +10,7 @@
 // measured above a keyboard at phone widths, in both orientations and at 2x
 // text. Run through tool/android_regression/runner.dart.
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -216,10 +217,16 @@ Future<double> _raiseKeyboard(WidgetTester t) async {
 }
 
 Future<void> _lowerKeyboard(WidgetTester t) async {
+  FocusManager.instance.primaryFocus?.unfocus();
+  await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
   t.view
     ..resetViewInsets()
     ..resetPadding();
-  await t.pumpAndSettle();
+  await settleUntil(
+    t,
+    () => t.view.viewInsets.bottom == 0,
+    description: 'native keyboard hidden',
+  );
 }
 
 bool _focused(WidgetTester t, Finder field) => t

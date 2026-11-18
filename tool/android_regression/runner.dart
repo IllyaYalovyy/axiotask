@@ -36,6 +36,7 @@ final class RunnerOptions {
     this.adb = 'adb',
     this.apkanalyzer = 'apkanalyzer',
     this.git = 'git',
+    this.testEntrypoint,
   });
 
   final String subset;
@@ -46,12 +47,13 @@ final class RunnerOptions {
   final String adb;
   final String apkanalyzer;
   final String git;
+  final String? testEntrypoint;
 
   static const usage =
       'Usage: dart run tool/android_regression/run.dart '
       '--subset <baseline|complete> --device <device-id> '
       '--artifacts <directory> [--manifest <path>] [--flutter <path>] '
-      '[--adb <path>] [--apkanalyzer <path>]';
+      '[--adb <path>] [--apkanalyzer <path>] [--test-entrypoint <path>]';
 
   static RunnerOptions parse(List<String> arguments) {
     final values = <String, String>{};
@@ -74,6 +76,7 @@ final class RunnerOptions {
       flutter: values.remove('flutter') ?? 'flutter',
       adb: values.remove('adb') ?? 'adb',
       apkanalyzer: values.remove('apkanalyzer') ?? 'apkanalyzer',
+      testEntrypoint: values.remove('test-entrypoint'),
     );
     if (values.isNotEmpty) {
       throw FormatException('Unknown options ${values.keys}\n$usage');
@@ -99,6 +102,9 @@ Future<int> runRegression(
     for (final entry in expected)
       if (entry.contract == ContractState.implemented) entry.testPath,
   }.toList()..sort();
+  final executionPaths = options.testEntrypoint == null
+      ? testPaths
+      : <String>[options.testEntrypoint!];
   await options.artifacts.create(recursive: true);
   final infrastructure = <String>[];
   final teardown = <String>[];
@@ -120,10 +126,11 @@ Future<int> runRegression(
     infrastructure.add(
       'Could not read the state of $productionPackage; refusing to install',
     );
-  } else if (!android || await _verifyIsolatedBuild(options, run, testPaths)) {
+  } else if (!android ||
+      await _verifyIsolatedBuild(options, run, executionPaths)) {
     final result = await run(options.flutter, <String>[
       'test',
-      ...testPaths,
+      ...executionPaths,
       '-d',
       options.device,
       '--reporter',
@@ -207,6 +214,7 @@ Future<int> runRegression(
       'production_package_after': productionAfter,
       'production_package_unchanged': productionUnchanged,
       'test_paths': testPaths,
+      'execution_paths': executionPaths,
       'flutter_test_exit_code': testExitCode,
       'cases': [for (final result in evaluation.results) result.toJson()],
       'environments': [

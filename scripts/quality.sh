@@ -25,6 +25,9 @@ printf 'Testing first-class Linux profile commands...\n'
 printf 'Testing the privacy checker...\n'
 ./test/privacy_check_test.sh
 
+printf 'Testing Android release qualification...\n'
+bash test/android_qualification_test.sh
+
 printf 'Scanning repository privacy...\n'
 ./scripts/privacy_check.sh
 

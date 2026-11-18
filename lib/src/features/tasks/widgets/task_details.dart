@@ -718,10 +718,111 @@ final class SubtaskList extends StatelessWidget {
               : () => unawaited(viewModel.complete(child.id)),
           onSchedule: () =>
               unawaited(scheduleTaskFromSwipe(context, viewModel, child)),
-          child: _subtaskTile(context, index, child),
+          child: _reorderableSubtask(context, index, child),
         ),
     ],
   );
+
+  Widget _reorderableSubtask(
+    BuildContext context,
+    int index,
+    CachedTask child,
+  ) {
+    if (!viewModel.canReorderChildren ||
+        Theme.of(context).platform != TargetPlatform.android ||
+        MediaQuery.sizeOf(context).width >= 1024) {
+      return _subtaskTile(context, index, child);
+    }
+    var dropAfter = false;
+    return StatefulBuilder(
+      builder: (targetContext, setDropState) => DragTarget<TaskId>(
+        onWillAcceptWithDetails: (details) =>
+            details.data != child.id &&
+            children.any((t) => t.id == details.data),
+        onMove: (details) {
+          final box = targetContext.findRenderObject()! as RenderBox;
+          final after =
+              box.globalToLocal(details.offset).dy >= box.size.height / 2;
+          if (after != dropAfter) setDropState(() => dropAfter = after);
+        },
+        onAcceptWithDetails: (details) {
+          final box = targetContext.findRenderObject()! as RenderBox;
+          final after =
+              box.globalToLocal(details.offset).dy >= box.size.height / 2;
+          unawaited(
+            viewModel.reorderChild(details.data, child.id, after: after),
+          );
+        },
+        builder: (context, candidates, _) => DecoratedBox(
+          decoration: BoxDecoration(
+            border: candidates.isEmpty
+                ? null
+                : Border(
+                    top: dropAfter
+                        ? BorderSide.none
+                        : BorderSide(
+                            width: 2,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                    bottom: dropAfter
+                        ? BorderSide(
+                            width: 2,
+                            color: Theme.of(context).colorScheme.primary,
+                          )
+                        : BorderSide.none,
+                  ),
+          ),
+          child: Row(
+            children: [
+              LongPressDraggable<TaskId>(
+                data: child.id,
+                onDragUpdate: (details) {
+                  final scrollable = Scrollable.maybeOf(context);
+                  final box = scrollable?.context.findRenderObject();
+                  if (scrollable == null || box is! RenderBox) return;
+                  final y = box.globalToLocal(details.globalPosition).dy;
+                  final delta = y < 48
+                      ? -32.0
+                      : y > box.size.height - 48
+                      ? 32.0
+                      : 0.0;
+                  final position = scrollable.position;
+                  if (delta != 0) {
+                    position.jumpTo(
+                      (position.pixels + delta).clamp(
+                        position.minScrollExtent,
+                        position.maxScrollExtent,
+                      ),
+                    );
+                  }
+                },
+                dragAnchorStrategy: pointerDragAnchorStrategy,
+                feedback: Material(
+                  elevation: 8,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(child.title),
+                  ),
+                ),
+                child: Tooltip(
+                  message: 'Drag to reorder ${child.title}',
+                  // Preserve the long press for dragging, not a tooltip.
+                  triggerMode: TooltipTriggerMode.manual,
+                  child: SizedBox(
+                    key: Key('touch-reorder-${child.id.value}'),
+                    width: 48,
+                    height: 48,
+                    child: const Icon(Icons.drag_handle),
+                  ),
+                ),
+              ),
+              Expanded(child: _subtaskTile(context, index, child)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   Widget _subtaskTile(BuildContext context, int index, CachedTask child) =>
       ListTile(

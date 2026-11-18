@@ -787,6 +787,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   Future<void> refresh() {
+    if (_disposed) return Future<void>.value();
     final existing = _refreshInFlight;
     if (existing != null) return existing;
     final action = refreshRequested;
@@ -798,13 +799,20 @@ final class TasksViewModel extends ChangeNotifier {
 
   Future<void> _performRefresh(Future<void> Function() action) async {
     _recordUi('ui.refresh_started', DiagnosticEventKind.transition);
-    _replaceState(_state.copyWith(isRefreshing: true));
+    _replaceState(
+      _state.copyWith(isRefreshing: true, syncControlFailureMessage: null),
+    );
     try {
-      await action();
+      await Future<void>.sync(action);
       _recordUi('ui.refresh_completed', DiagnosticEventKind.transition);
     } on Object {
       _recordUi('ui.refresh_failed', DiagnosticEventKind.failure);
-      rethrow;
+      _replaceState(
+        _state.copyWith(
+          syncControlFailureMessage:
+              'Refresh could not complete. Open sync details and retry.',
+        ),
+      );
     } finally {
       _refreshInFlight = null;
       _replaceState(_state.copyWith(isRefreshing: false));
@@ -1697,6 +1705,7 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _replaceState(TasksViewState value) {
+    if (_disposed) return;
     final previous = _state.selectedTaskId;
     _state = value;
     _rememberTraversalAnchor();

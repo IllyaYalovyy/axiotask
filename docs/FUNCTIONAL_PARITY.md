@@ -11,6 +11,16 @@ and is not referenced here.
 
 ## How to use this plan
 
+The November 15 Android audit compares v1.5.6 against the v1.5.3 behavior basis.
+Its executable coverage is now the 40-entry manifest in
+`integration_test/android_regression/manifest.json` (36 numbered flows plus four
+findings). The complete CI gate includes the 17 previously passing behaviors,
+real isolated SQLite and native preferences. See [Testing](TESTING.md#android-takeover-qualification)
+for reproduction and [CI](CI.md#android-candidate-qualification-before-publication)
+for exact-APK release evidence. A manifest marked implemented is a requirement
+to execute, not a claim of physical-device qualification. Signed physical-device
+workflow execution and inspected comparison screenshots remain outstanding.
+
 Each capability has a stable parity ID. A vertical slice may change
 **Implementation** from `Not started` only when its specified behavior exists.
 It may change **Verification** from `Not run` only when every required evidence

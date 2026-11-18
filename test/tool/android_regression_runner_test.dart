@@ -85,6 +85,31 @@ void main() {
     expect(lines, anyElement(startsWith('CASE 02_two MISSING')));
   });
 
+  test('a combined entrypoint still requires every manifest case', () async {
+    final combined = RunnerOptions(
+      subset: options.subset,
+      device: options.device,
+      artifacts: options.artifacts,
+      manifestPath: options.manifestPath,
+      testEntrypoint: 'integration_test/android_regression/complete_test.dart',
+    );
+    final device = _FakeDevice(cases: <_Case>[_Case.pass('01_one')]);
+    final calls = <List<String>>[];
+    final code = await runRegression(combined, (executable, arguments) {
+      if (executable == 'flutter') calls.add(arguments);
+      return device.run(executable, arguments);
+    }, log: (_) {});
+    expect(code, 1);
+    expect(
+      calls.singleWhere((args) => args.first == 'test'),
+      contains(combined.testEntrypoint),
+    );
+    expect(
+      _runJson(combined)['cases'],
+      anyElement(containsPair('outcome', 'missing')),
+    );
+  });
+
   test('fails on a teardown error even when assertions pass', () async {
     final (code, lines, _) = await runWith(
       _FakeDevice(

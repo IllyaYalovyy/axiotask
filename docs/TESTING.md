@@ -6,6 +6,50 @@ requires the relevant broader checks to remain green.
 
 ## Principles
 
+### Android takeover qualification
+
+The maintained contract is the November 15 v1.5.3/v1.5.6 audit manifest in
+`integration_test/android_regression/manifest.json`: 36 numbered flows and four
+additional findings. The `complete` runner evaluates every entry, rejecting
+missing, skipped, duplicate, failed, mislabeled or outstanding results. The
+17-case `baseline` remains a useful focused check but cannot establish complete
+Android readiness.
+
+Start the isolated emulator with `bash scripts/android_emulator.sh` (see
+DEVELOPMENT for host-specific renderer findings), wait for
+`adb -s emulator-5580 shell getprop sys.boot_completed` to print `1`, then run:
+
+```bash
+dart run tool/android_regression/run.dart --subset complete \
+  --test-entrypoint integration_test/android_regression/complete_test.dart \
+  --device emulator-5580 --artifacts test-results/android-complete \
+  --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+```
+
+Run integration builds serially in a checkout. The fixtures use private SQLite
+files, an isolated test application ID, and on Android real native preferences
+under per-case namespaces which are removed before and after each case. No live
+Google account is used. Native writes are awaited by persisted/observable state.
+Retain `run.json`, reporter output and per-case PNGs, including failure output.
+The runner records dirty tracked-source state; publication requires a clean,
+exact matching commit. A local test pass does not claim physical-device or
+signed-release-candidate qualification.
+
+Phone feedback is height bounded and scrollable; tests scroll to feedback
+actions such as Undo when necessary. Composer tests cover transient keyboard
+rotation sizes as well as final portrait/landscape layouts. Task-row long press
+selects, horizontal swipe acts, and dedicated drag handles reorder in manual
+order. The task presentation import test prevents direct database and sync
+engine/coordinator imports from bypassing the domain commands.
+
+The complete entrypoint builds one APK for all suites. Its import coverage is
+checked against the manifest, and the runner still rejects missing/duplicate
+case results. `python3 tool/android_regression/check_sensitivity.py` copies the
+current tracked source to a temporary directory, verifies focused tests pass,
+then injects menu, gesture, wrong-task-ID and cascade faults one at a time. It
+requires assertion failures and retains logs in `test-results/android-sensitivity`.
+It never mutates the working checkout.
+
 - Assert observable behavior, state transitions, invariants, and failure impact.
 - Prefer stateful fakes over interaction-only mocks.
 - Inject clocks, randomness, storage, lifecycle, connectivity, and services.

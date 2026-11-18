@@ -83,7 +83,10 @@ Run Flutter integration commands serially within one checkout, even when their
 target devices differ. They share `build/test/listener_0.dart`: overlapping
 Android and Linux builds can compile the wrong test or remove the other build's
 entry point. Use separate checkouts and build directories if parallel execution
-is needed. Native SQLite writes must be awaited by observable state or persisted
+is needed. Serialize host Flutter test commands too: they share generated native
+asset outputs. A concurrent takeover run recorded a host test-process SIGBUS;
+the same storage test passed alone, so that run is not clean acceptance evidence.
+Native SQLite writes must be awaited by observable state or persisted
 outcomes; `pumpAndSettle` only waits for scheduled frames.
 
 ## Locked scaffold toolchain and dependencies

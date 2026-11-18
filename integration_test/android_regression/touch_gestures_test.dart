@@ -8,10 +8,14 @@
 // the durable publication intent behind every changed task, that cancelled
 // or short swipes and vertical scrolling change nothing, and that the shared
 // completion and due-date policies (subtask cascade, due cascade and both
-// Undo offers) apply exactly as for the buttons. Cases 34 and 35 share this
-// file's manifest path and stay outstanding. Run through
+// Undo offers) apply exactly as for the buttons. Cases 34 and 35 also cover
+// pull-to-refresh and task/subtask touch reordering. Run through
 // tool/android_regression/runner.dart.
+import 'dart:async';
+
+import 'package:axiotask/src/data/database/cache_dao.dart';
 import 'package:axiotask/src/data/database/desired_state_dao.dart';
+import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -32,6 +36,193 @@ final _tomorrow = TaskDate(2026, 11, 16);
 
 void main() {
   ensureRegressionBinding();
+
+  regressionCase(
+    '35_touch_reorder',
+    phoneOnHost: true,
+    seed: const RegressionSeed(extraTopLevelTitles: ['Last sibling']),
+    (t, f) async {
+      Future<List<TaskId>> order() async => (await f.tasks())
+          .where(
+            (task) => task.parentTaskId == null && task.taskListId == f.list,
+          )
+          .map((task) => task.id)
+          .toList();
+      final initial = await order();
+      await f.model.setViewSort(ViewSort.title);
+      await t.pumpAndSettle();
+      expect(find.byKey(Key('touch-reorder-${f.second.value}')), findsNothing);
+      await f.model.setViewSort(ViewSort.manual);
+      await t.pumpAndSettle();
+      final handle = find.byKey(Key('touch-reorder-${f.second.value}'));
+      await t.ensureVisible(handle);
+      final cancelled = await t.startGesture(t.getCenter(handle));
+      await t.pump(const Duration(milliseconds: 600));
+      await cancelled.cancel();
+      await t.pumpAndSettle();
+      expect(await order(), initial, reason: 'cancelled drag changes no order');
+      final target = t.getTopLeft(f.row(f.parent)) + const Offset(100, 8);
+      final gesture = await t.startGesture(t.getCenter(handle));
+      await t.pump(const Duration(milliseconds: 600));
+      await gesture.moveTo(target);
+      await t.pump();
+      await gesture.up();
+      await settleUntil(
+        t,
+        () async => (await order()).first == f.second,
+        description: 'touch reorder persisted',
+      );
+      final intent = await DesiredStateDao(f.database)
+          .readTask(f.account, f.second);
+      expect(intent?.structureDirty, isTrue);
+      expect(f.model.state.isBulkSelectionActive, isFalse);
+      expect((await f.task(f.second)).status, TaskStatus.needsAction);
+      await f.capture(t, 'touch_reordered');
+      await f.restartApp(t);
+      expect((await order()).first, f.second);
+      expect((await order()).toSet(), initial.toSet());
+
+      // Move the first row to the end, then back to the middle. Verify the
+      // repository order after each drop, not only the visual preview.
+      final last = initial.last;
+      for (final (targetId, after, expected) in [
+        (last, true, [f.parent, last, f.second]),
+        (last, false, [f.parent, f.second, last]),
+      ]) {
+        final source = find.byKey(Key('touch-reorder-${f.second.value}'));
+        final targetRow = f.row(targetId);
+        await t.ensureVisible(source);
+        await t.ensureVisible(targetRow);
+        final bounds = t.getRect(targetRow);
+        final drag = await t.startGesture(t.getCenter(source));
+        await t.pump(const Duration(milliseconds: 600));
+        await drag.moveTo(
+          Offset(bounds.left + 100, after ? bounds.bottom - 8 : bounds.top + 8),
+        );
+        await t.pump();
+        expect(
+          find.byKey(Key('desktop-task-drop-indicator-${targetId.value}')),
+          findsOneWidget,
+        );
+        await drag.up();
+        await settleUntil(
+          t,
+          () async => (await order()).join(',') == expected.join(','),
+          description: 'first/last/middle sibling order persisted',
+        );
+      }
+      await f.restartApp(t);
+      expect(await order(), [f.parent, f.second, last]);
+    },
+  );
+
+  regressionCase(
+    'subtask-touch-reorder',
+    phoneOnHost: true,
+    seed: const RegressionSeed(openChildTitles: ['Later child']),
+    (t, f) async {
+      await f.openParent(t);
+      final source = f.openChildren.last;
+      final handle = find.byKey(Key('touch-reorder-${source.value}'));
+      await t.ensureVisible(handle);
+      final targetFinder = find.byKey(Key('subtask-${f.child.value}'));
+      await t.ensureVisible(targetFinder);
+      final gesture = await t.startGesture(t.getCenter(handle));
+      await t.pump(const Duration(milliseconds: 600));
+      await gesture.moveTo(t.getTopLeft(targetFinder) + const Offset(100, 4));
+      await t.pump();
+      await gesture.up();
+      Future<bool> first() async =>
+          (await f.tasks())
+              .where((task) => task.parentTaskId == f.parent)
+              .first
+              .id ==
+          source;
+      await settleUntil(t, first, description: 'subtask order persisted');
+      expect(
+        (await DesiredStateDao(
+          f.database,
+        ).readTask(f.account, source))?.structureDirty,
+        isTrue,
+      );
+      await f.capture(t, 'subtask_reordered');
+      await f.restartApp(t);
+      expect(await first(), isTrue);
+      await f.openParent(t);
+      final target = find.byKey(Key('subtask-${f.child.value}'));
+      await t.ensureVisible(target);
+      final drag = await t.startGesture(t.getCenter(handle));
+      await t.pump(const Duration(milliseconds: 600));
+      final bounds = t.getRect(target);
+      await drag.moveTo(Offset(bounds.left + 100, bounds.bottom - 4));
+      await t.pump();
+      await drag.up();
+      await settleUntil(
+        t,
+        () async => !await first(),
+        description: 'subtask moved after sibling',
+      );
+      expect(
+        (await f.tasks())
+            .where((task) => task.parentTaskId == f.parent)
+            .map((task) => task.id),
+        [f.child, source],
+      );
+    },
+  );
+
+  regressionCase('34_pull_to_refresh', phoneOnHost: true, (t, f) async {
+    final before = await _stored(f);
+    final completion = Completer<void>();
+    f.onRefresh = () => completion.future;
+    final list = find.byKey(const Key('desktop-task-scroll'));
+    try {
+      await t.drag(list, const Offset(0, 300));
+      for (var n = 0; n < 100 && f.refreshRequests == 0; n++) {
+        await t.pump(const Duration(milliseconds: 50));
+      }
+      expect(f.refreshRequests, 1);
+      expect(f.model.state.isRefreshing, isTrue);
+      final duplicate = f.model.refresh();
+      expect(
+        f.refreshRequests,
+        1,
+        reason: 'toolbar and pull share one request',
+      );
+      await f.capture(t, 'refresh_pending', settle: false);
+      completion.complete();
+      await duplicate;
+    } finally {
+      if (!completion.isCompleted) completion.complete();
+    }
+    await t.pumpAndSettle();
+    expect(f.model.state.isRefreshing, isFalse);
+    expect(await _stored(f), before);
+
+    final emptyList = await CacheDao(f.database).putTaskList(
+      accountId: f.account,
+      remoteId: const TaskListRemoteId('audit-empty-refresh'),
+      title: 'Empty refresh list',
+    );
+    await settleUntil(
+      t,
+      () => f.model.state.taskLists.any((list) => list.id == emptyList),
+      description: 'empty list to reach the model',
+    );
+    f.model.selectTaskList(emptyList);
+    await t.pumpAndSettle();
+    expect(find.text('No cached tasks in this list'), findsOneWidget);
+    f.onRefresh = () async => throw StateError('synthetic offline');
+    await t.drag(list, const Offset(0, 300));
+    await settleUntil(
+      t,
+      () => f.refreshRequests == 2 && !f.model.state.isRefreshing,
+      description: 'empty-list refresh failure to clear progress',
+    );
+    expect(f.model.state.syncControlFailureMessage, isNotNull);
+    expect(await _stored(f), before, reason: 'failed refresh keeps local data');
+    await f.capture(t, 'empty_refresh_failed');
+  });
 
   regressionCase(
     '02_swipe_complete',

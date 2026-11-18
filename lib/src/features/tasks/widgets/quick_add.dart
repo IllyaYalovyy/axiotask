@@ -558,23 +558,39 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
         borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              titleRow,
-              Flexible(
-                child: SingleChildScrollView(
-                  key: const Key('composer-details-scroll'),
-                  primary: false,
-                  padding: const EdgeInsets.only(left: 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: details,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  // Keyboard/rotation transitions can leave less than one
+                  // scaled row of space. Bound its viewport, while keeping the
+                  // same field element and input connection across rotations.
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: constraints.maxHeight,
+                    ),
+                    child: SingleChildScrollView(
+                      key: const Key('composer-title-scroll'),
+                      primary: false,
+                      child: titleRow,
+                    ),
                   ),
-                ),
-              ),
-            ],
+                  Flexible(
+                    child: SingleChildScrollView(
+                      key: const Key('composer-details-scroll'),
+                      primary: false,
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: details,
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       );

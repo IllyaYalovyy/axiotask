@@ -698,182 +698,219 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                 final state = widget.viewModel.state;
                 return AppNavigationScope(
                   controller: _navigation,
-                  child: Column(
-                    children: <Widget>[
-                      if (!composingAboveKeyboard)
-                        _ApplicationHeader(
-                          health: state.health,
-                          onHealthAction: state.isSyncControlPending
-                              ? null
-                              : widget.onHealthAction ??
-                                    (action) => unawaited(
-                                      widget.viewModel.handleSyncHealthAction(
-                                        action,
-                                      ),
-                                    ),
-                          isRefreshing: state.isRefreshing,
-                          isSyncControlPending: state.isSyncControlPending,
-                          onRefresh: widget.viewModel.refreshRequested == null
-                              ? null
-                              : widget.viewModel.refresh,
-                          onStopSync: widget.viewModel.stopSync,
-                          onSearch: _navigation.openSearch,
-                          onShowShortcuts: _showShortcutReference,
-                          showSearch:
-                              state.selectedTaskId == null &&
-                              state.tasks.isNotEmpty,
-                          onOpenNavigation: _navigation.openDrawer,
-                          diagnosticsBuilder: widget.diagnosticsBuilder,
-                          accountBackupBuilder: widget.accountBackupBuilder,
-                          localDataRecoveryBuilder:
-                              widget.localDataRecoveryBuilder,
-                          settingsBuilder: widget.settingsBuilder,
-                        ),
-                      if (state.syncControlFailureMessage case final message?)
-                        MaterialBanner(
-                          content: Text(message),
-                          actions: const <Widget>[SizedBox.shrink()],
-                        ),
-                      if (state.listCommandFailureMessage case final message?)
-                        MaterialBanner(
-                          content: Text(message),
-                          actions: const <Widget>[SizedBox.shrink()],
-                        ),
-                      if (state.taskCommandFailureMessage case final message?)
-                        MaterialBanner(
-                          content: Text(message),
-                          actions: const <Widget>[SizedBox.shrink()],
-                        ),
-                      if (state.preferenceFailureMessage case final message?)
-                        MaterialBanner(
-                          content: Text(message),
-                          actions: const <Widget>[SizedBox.shrink()],
-                        ),
-                      if (state.bulkCommandFailureMessage case final message?)
-                        MaterialBanner(
-                          content: Text(message),
-                          actions: const <Widget>[SizedBox.shrink()],
-                        ),
-                      if (state.latestBulkOperation case final summary?)
-                        _BulkOperationResultBanner(summary: summary),
-                      if (state.taskDeleteGroupUndos.firstOrNull
-                          case final undo?)
-                        MaterialBanner(
-                          key: const Key('bulk-delete-undo'),
-                          leading: const Icon(Icons.delete_outline),
-                          content: Text(
-                            '${undo.selectedCount} selected '
-                            '${undo.selectedCount == 1 ? 'task' : 'tasks'} deleted',
+                  child: LayoutBuilder(
+                    builder: (context, shellConstraints) => Column(
+                      children: <Widget>[
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxHeight: shellConstraints.maxWidth < 1024
+                                ? shellConstraints.maxHeight * 0.4
+                                : double.infinity,
                           ),
-                          actions: <Widget>[
-                            TextButton(
-                              onPressed: state.isTaskCommandPending
-                                  ? null
-                                  : () => unawaited(
-                                      widget.viewModel.undoTaskDeleteGroup(
-                                        undo.groupId,
+                          child: SingleChildScrollView(
+                            key: const Key('shell-feedback-scroll'),
+                            primary: false,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                if (!composingAboveKeyboard)
+                                  _ApplicationHeader(
+                                    health: state.health,
+                                    onHealthAction: state.isSyncControlPending
+                                        ? null
+                                        : widget.onHealthAction ??
+                                              (action) => unawaited(
+                                                widget.viewModel
+                                                    .handleSyncHealthAction(
+                                                      action,
+                                                    ),
+                                              ),
+                                    isRefreshing: state.isRefreshing,
+                                    isSyncControlPending:
+                                        state.isSyncControlPending,
+                                    onRefresh:
+                                        widget.viewModel.refreshRequested ==
+                                            null
+                                        ? null
+                                        : widget.viewModel.refresh,
+                                    onStopSync: widget.viewModel.stopSync,
+                                    onSearch: _navigation.openSearch,
+                                    onShowShortcuts: _showShortcutReference,
+                                    showSearch:
+                                        state.selectedTaskId == null &&
+                                        state.tasks.isNotEmpty,
+                                    onOpenNavigation: _navigation.openDrawer,
+                                    diagnosticsBuilder:
+                                        widget.diagnosticsBuilder,
+                                    accountBackupBuilder:
+                                        widget.accountBackupBuilder,
+                                    localDataRecoveryBuilder:
+                                        widget.localDataRecoveryBuilder,
+                                    settingsBuilder: widget.settingsBuilder,
+                                  ),
+                                if (state.syncControlFailureMessage
+                                    case final message?)
+                                  MaterialBanner(
+                                    content: Text(message),
+                                    actions: const <Widget>[SizedBox.shrink()],
+                                  ),
+                                if (state.listCommandFailureMessage
+                                    case final message?)
+                                  MaterialBanner(
+                                    content: Text(message),
+                                    actions: const <Widget>[SizedBox.shrink()],
+                                  ),
+                                if (state.taskCommandFailureMessage
+                                    case final message?)
+                                  MaterialBanner(
+                                    content: Text(message),
+                                    actions: const <Widget>[SizedBox.shrink()],
+                                  ),
+                                if (state.preferenceFailureMessage
+                                    case final message?)
+                                  MaterialBanner(
+                                    content: Text(message),
+                                    actions: const <Widget>[SizedBox.shrink()],
+                                  ),
+                                if (state.bulkCommandFailureMessage
+                                    case final message?)
+                                  MaterialBanner(
+                                    content: Text(message),
+                                    actions: const <Widget>[SizedBox.shrink()],
+                                  ),
+                                if (state.latestBulkOperation
+                                    case final summary?)
+                                  _BulkOperationResultBanner(summary: summary),
+                                if (state.taskDeleteGroupUndos.firstOrNull
+                                    case final undo?)
+                                  MaterialBanner(
+                                    key: const Key('bulk-delete-undo'),
+                                    leading: const Icon(Icons.delete_outline),
+                                    content: Text(
+                                      '${undo.selectedCount} selected '
+                                      '${undo.selectedCount == 1 ? 'task' : 'tasks'} deleted',
+                                    ),
+                                    actions: <Widget>[
+                                      TextButton(
+                                        onPressed: state.isTaskCommandPending
+                                            ? null
+                                            : () => unawaited(
+                                                widget.viewModel
+                                                    .undoTaskDeleteGroup(
+                                                      undo.groupId,
+                                                    ),
+                                              ),
+                                        child: const Text('Undo all'),
                                       ),
+                                    ],
+                                  ),
+                                if (state.taskCompletionUndo case final undo?)
+                                  MaterialBanner(
+                                    key: const Key('task-completion-undo'),
+                                    leading: const Icon(
+                                      Icons.check_circle_outline,
                                     ),
-                              child: const Text('Undo all'),
-                            ),
-                          ],
-                        ),
-                      if (state.taskCompletionUndo case final undo?)
-                        MaterialBanner(
-                          key: const Key('task-completion-undo'),
-                          leading: const Icon(Icons.check_circle_outline),
-                          content: Text(_completionUndoMessage(undo)),
-                          actions: <Widget>[
-                            TextButton(
-                              key: const Key('task-completion-undo-action'),
-                              onPressed: state.isTaskCommandPending
-                                  ? null
-                                  : () => unawaited(
-                                      widget.viewModel.undoTaskCompletion(),
-                                    ),
-                              child: const Text('Undo'),
-                            ),
-                          ],
-                        ),
-                      if (state.taskDeleteUndos.firstOrNull case final undo?)
-                        MaterialBanner(
-                          leading: const Icon(Icons.delete_outline),
-                          content: Text('“${undo.title}” deleted'),
-                          actions: <Widget>[
-                            TextButton(
-                              onPressed: state.isTaskCommandPending
-                                  ? null
-                                  : () => unawaited(
-                                      widget.viewModel.undoTaskDelete(
-                                        undo.taskId,
+                                    content: Text(_completionUndoMessage(undo)),
+                                    actions: <Widget>[
+                                      TextButton(
+                                        key: const Key(
+                                          'task-completion-undo-action',
+                                        ),
+                                        onPressed: state.isTaskCommandPending
+                                            ? null
+                                            : () => unawaited(
+                                                widget.viewModel
+                                                    .undoTaskCompletion(),
+                                              ),
+                                        child: const Text('Undo'),
                                       ),
-                                    ),
-                              child: const Text('Undo'),
+                                    ],
+                                  ),
+                                if (state.taskDeleteUndos.firstOrNull
+                                    case final undo?)
+                                  MaterialBanner(
+                                    leading: const Icon(Icons.delete_outline),
+                                    content: Text('“${undo.title}” deleted'),
+                                    actions: <Widget>[
+                                      TextButton(
+                                        onPressed: state.isTaskCommandPending
+                                            ? null
+                                            : () => unawaited(
+                                                widget.viewModel.undoTaskDelete(
+                                                  undo.taskId,
+                                                ),
+                                              ),
+                                        child: const Text('Undo'),
+                                      ),
+                                    ],
+                                  ),
+                              ],
                             ),
-                          ],
+                          ),
                         ),
-                      Expanded(
-                        child: _withPhoneSmartViewBar(
-                          context,
-                          state,
-                          keyboardVisible: keyboardVisible,
-                          child: LayoutBuilder(
-                            builder: (context, constraints) {
-                              final wide = constraints.maxWidth >= 1024;
-                              final pages = <Page<Object?>>[
-                                _surfacePage(const CollectionRoute()),
-                                for (final route
-                                    in _navigation.state.routes.skip(1))
-                                  _surfacePage(route),
-                              ];
-                              final visible = switch (_visibleSurfaceRoute) {
-                                SearchRoute() => SearchOverlay(
-                                  viewModel: _search,
-                                  onOpenResult: _openSearchResult,
-                                  onClose: _handleBack,
-                                ),
-                                DrawerRoute() => _ListNavigation(
-                                  state: state,
-                                  viewModel: widget.viewModel,
-                                  onSelected: _handleBack,
-                                ),
-                                CollectionRoute() ||
-                                TaskDetailRoute() => _shellBody(
-                                  state,
-                                  wide,
-                                  keyboardVisible: keyboardVisible,
-                                ),
-                                _ => throw StateError(
-                                  'unsupported_visual_route',
-                                ),
-                              };
-                              return NavigatorPopHandler<Object?>(
-                                onPopWithResult: (_) => _surfaceNavigatorKey
-                                    .currentState
-                                    ?.maybePop(),
-                                child: Stack(
-                                  fit: StackFit.expand,
-                                  children: <Widget>[
-                                    visible,
-                                    Offstage(
-                                      offstage: true,
-                                      child: ExcludeFocus(
-                                        child: Navigator(
-                                          key: _surfaceNavigatorKey,
-                                          requestFocus: false,
-                                          pages: pages,
-                                          onDidRemovePage: _pageRemoved,
+                        Expanded(
+                          child: _withPhoneSmartViewBar(
+                            context,
+                            state,
+                            keyboardVisible: keyboardVisible,
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final wide = constraints.maxWidth >= 1024;
+                                final pages = <Page<Object?>>[
+                                  _surfacePage(const CollectionRoute()),
+                                  for (final route
+                                      in _navigation.state.routes.skip(1))
+                                    _surfacePage(route),
+                                ];
+                                final visible = switch (_visibleSurfaceRoute) {
+                                  SearchRoute() => SearchOverlay(
+                                    viewModel: _search,
+                                    onOpenResult: _openSearchResult,
+                                    onClose: _handleBack,
+                                  ),
+                                  DrawerRoute() => _ListNavigation(
+                                    state: state,
+                                    viewModel: widget.viewModel,
+                                    onSelected: _handleBack,
+                                  ),
+                                  CollectionRoute() ||
+                                  TaskDetailRoute() => _shellBody(
+                                    state,
+                                    wide,
+                                    keyboardVisible: keyboardVisible,
+                                  ),
+                                  _ => throw StateError(
+                                    'unsupported_visual_route',
+                                  ),
+                                };
+                                return NavigatorPopHandler<Object?>(
+                                  onPopWithResult: (_) => _surfaceNavigatorKey
+                                      .currentState
+                                      ?.maybePop(),
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: <Widget>[
+                                      visible,
+                                      Offstage(
+                                        offstage: true,
+                                        child: ExcludeFocus(
+                                          child: Navigator(
+                                            key: _surfaceNavigatorKey,
+                                            requestFocus: false,
+                                            pages: pages,
+                                            onDidRemovePage: _pageRemoved,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 );
               },
@@ -2894,6 +2931,14 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     super.dispose();
   }
 
+  Widget _refreshable(Widget child) {
+    if (widget.phoneCapture == null ||
+        widget.viewModel.refreshRequested == null) {
+      return child;
+    }
+    return RefreshIndicator(onRefresh: widget.viewModel.refresh, child: child);
+  }
+
   @override
   Widget build(BuildContext context) {
     final projection = state.visibleProjection;
@@ -3107,114 +3152,142 @@ final class _TaskCollectionState extends State<_TaskCollection> {
               child: Stack(
                 key: _scrollViewportKey,
                 children: <Widget>[
-                  if (tasks.isEmpty)
-                    const Center(child: Text('No cached tasks in this list'))
-                  else
-                    ListView.separated(
-                      key: const Key('desktop-task-scroll'),
-                      controller: _scrollController,
-                      padding: EdgeInsets.only(
-                        top: rowMetrics.listInset,
-                        // The last row scrolls clear of the add button.
-                        bottom:
-                            rowMetrics.listInset +
-                            (floatingAdd ? _PhoneCapture.buttonClearance : 0),
-                      ),
-                      itemCount: tasks.length,
-                      separatorBuilder: (_, _) =>
-                          Divider(height: 1, indent: rowMetrics.contentStart),
-                      itemBuilder: (context, index) {
-                        final row = rows[index];
-                        final task = row.task;
-                        final canonicalSiblings = state.tasks
-                            .where(
-                              (candidate) =>
-                                  candidate.taskListId == task.taskListId &&
-                                  candidate.parentTaskId == task.parentTaskId,
-                            )
-                            .toList(growable: false);
-                        final progress = projectDirectChildProgress(
-                          parentTaskId: task.id,
-                          tasks: state.tasks,
-                        );
-                        final taskRow = _DesktopTaskRow(
-                          key: Key('desktop-task-row-${task.id.value}'),
-                          focusNode: _rowFocusNodes[index],
-                          onFocused: () => widget.onTaskFocused(task.id),
-                          onMoveFocus: (delta) =>
-                              _moveFocus(index, delta, tasks),
-                          onAction: (action) =>
-                              widget.onTaskAction(action, task.id),
-                          canonicalSiblings: canonicalSiblings,
-                          manualOrderEnabled:
-                              state.selectedTaskListId == task.taskListId &&
-                              state.selectedViewPreferences.sort ==
-                                  ViewSort.manual,
-                          dropPreview: widget.dropPreview,
-                          onDragStarted: widget.onDragStarted,
-                          onDragPreview: widget.onDragPreview,
-                          onDragCanceled: widget.onDragCanceled,
-                          onDrop: widget.onDrop,
-                          onDragMove: _autoscroll,
-                          density: widget.density,
-                          task: task,
-                          canMove: state.orderedTaskLists.any(
-                            (list) => list.id != task.taskListId,
-                          ),
-                          enabled:
-                              !state.isTaskCommandPending &&
-                              !state.isBulkCommandPending,
-                          selectionMode: state.isBulkSelectionActive,
-                          bulkSelected: state.bulkSelectedTaskIds.contains(
-                            task.id,
-                          ),
-                          onSelectionToggle: () =>
-                              viewModel.toggleBulkSelection(task.id),
-                          onBeginSelection: () =>
-                              viewModel.beginBulkSelection(task.id),
-                          onSwipeComplete: task.status == TaskStatus.completed
-                              ? null
-                              : () => unawaited(
-                                  viewModel.setTaskCompletion(
-                                    task.id,
-                                    TaskStatus.completed,
+                  _refreshable(
+                    tasks.isEmpty
+                        ? phoneCapture == null
+                              ? const Center(
+                                  child: Text('No cached tasks in this list'),
+                                )
+                              : ListView(
+                                  key: const Key('desktop-task-scroll'),
+                                  controller: _scrollController,
+                                  physics:
+                                      const AlwaysScrollableScrollPhysics(),
+                                  children: const [
+                                    Padding(
+                                      padding: EdgeInsets.all(24),
+                                      child: Text(
+                                        'No cached tasks in this list',
+                                      ),
+                                    ),
+                                  ],
+                                )
+                        : ListView.separated(
+                            key: const Key('desktop-task-scroll'),
+                            controller: _scrollController,
+                            physics: phoneCapture == null
+                                ? null
+                                : const AlwaysScrollableScrollPhysics(),
+                            padding: EdgeInsets.only(
+                              top: rowMetrics.listInset,
+                              // The last row scrolls clear of the add button.
+                              bottom:
+                                  rowMetrics.listInset +
+                                  (floatingAdd
+                                      ? _PhoneCapture.buttonClearance
+                                      : 0),
+                            ),
+                            itemCount: tasks.length,
+                            separatorBuilder: (_, _) => Divider(
+                              height: 1,
+                              indent: rowMetrics.contentStart,
+                            ),
+                            itemBuilder: (context, index) {
+                              final row = rows[index];
+                              final task = row.task;
+                              final canonicalSiblings = state.tasks
+                                  .where(
+                                    (candidate) =>
+                                        candidate.taskListId ==
+                                            task.taskListId &&
+                                        candidate.parentTaskId ==
+                                            task.parentTaskId,
+                                  )
+                                  .toList(growable: false);
+                              final progress = projectDirectChildProgress(
+                                parentTaskId: task.id,
+                                tasks: state.tasks,
+                              );
+                              final taskRow = _DesktopTaskRow(
+                                key: Key('desktop-task-row-${task.id.value}'),
+                                focusNode: _rowFocusNodes[index],
+                                onFocused: () => widget.onTaskFocused(task.id),
+                                onMoveFocus: (delta) =>
+                                    _moveFocus(index, delta, tasks),
+                                onAction: (action) =>
+                                    widget.onTaskAction(action, task.id),
+                                canonicalSiblings: canonicalSiblings,
+                                manualOrderEnabled:
+                                    state.selectedTaskListId ==
+                                        task.taskListId &&
+                                    state.selectedViewPreferences.sort ==
+                                        ViewSort.manual,
+                                dropPreview: widget.dropPreview,
+                                onDragStarted: widget.onDragStarted,
+                                onDragPreview: widget.onDragPreview,
+                                onDragCanceled: widget.onDragCanceled,
+                                onDrop: widget.onDrop,
+                                onDragMove: _autoscroll,
+                                density: widget.density,
+                                task: task,
+                                canMove: state.orderedTaskLists.any(
+                                  (list) => list.id != task.taskListId,
+                                ),
+                                enabled:
+                                    !state.isTaskCommandPending &&
+                                    !state.isBulkCommandPending,
+                                selectionMode: state.isBulkSelectionActive,
+                                bulkSelected: state.bulkSelectedTaskIds
+                                    .contains(task.id),
+                                onSelectionToggle: () =>
+                                    viewModel.toggleBulkSelection(task.id),
+                                onBeginSelection: () =>
+                                    viewModel.beginBulkSelection(task.id),
+                                onSwipeComplete:
+                                    task.status == TaskStatus.completed
+                                    ? null
+                                    : () => unawaited(
+                                        viewModel.setTaskCompletion(
+                                          task.id,
+                                          TaskStatus.completed,
+                                        ),
+                                      ),
+                                onSwipeSchedule: () => unawaited(
+                                  // The collection outlives a row that scrolls
+                                  // away or re-sorts while the sheet is open.
+                                  scheduleTaskFromSwipe(
+                                    this.context,
+                                    TaskDetailViewModel.fromTasks(viewModel),
+                                    task,
                                   ),
                                 ),
-                          onSwipeSchedule: () => unawaited(
-                            // The collection outlives a row that scrolls
-                            // away or re-sorts while the sheet is open.
-                            scheduleTaskFromSwipe(
-                              this.context,
-                              TaskDetailViewModel.fromTasks(viewModel),
-                              task,
-                            ),
+                                selected: task.id == state.selectedTaskId,
+                                metadata: phoneCapture == null
+                                    ? null
+                                    : projectTaskRowMetadata(
+                                        task: task,
+                                        effectiveDue: row.effectiveDue,
+                                        tasks: state.tasks,
+                                        view: projection.view,
+                                        listTitles: listTitles,
+                                        today: state.today,
+                                      ),
+                                subtitle: <String>[
+                                  if (task.due != null) 'Due ${task.due}',
+                                  if (row.effectiveDue.fromChildren != null)
+                                    'From subtasks ${row.effectiveDue.fromChildren}',
+                                  if (progress.total > 0) progress.label,
+                                ].join(' • '),
+                              );
+                              if (phoneCapture == null) return taskRow;
+                              return _MeasuredRow(
+                                taskId: task.id,
+                                onHeight: _rowHeightChanged,
+                                child: taskRow,
+                              );
+                            },
                           ),
-                          selected: task.id == state.selectedTaskId,
-                          metadata: phoneCapture == null
-                              ? null
-                              : projectTaskRowMetadata(
-                                  task: task,
-                                  effectiveDue: row.effectiveDue,
-                                  tasks: state.tasks,
-                                  view: projection.view,
-                                  listTitles: listTitles,
-                                  today: state.today,
-                                ),
-                          subtitle: <String>[
-                            if (task.due != null) 'Due ${task.due}',
-                            if (row.effectiveDue.fromChildren != null)
-                              'From subtasks ${row.effectiveDue.fromChildren}',
-                            if (progress.total > 0) progress.label,
-                          ].join(' • '),
-                        );
-                        if (phoneCapture == null) return taskRow;
-                        return _MeasuredRow(
-                          taskId: task.id,
-                          onHeight: _rowHeightChanged,
-                          child: taskRow,
-                        );
-                      },
-                    ),
+                  ),
                 ],
               ),
             ),
@@ -3575,6 +3648,38 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
                         ],
                       ),
                     ),
+                    if (widget.metadata != null &&
+                        widget.manualOrderEnabled &&
+                        !widget.selectionMode)
+                      LongPressDraggable<DesktopTaskDragPayload>(
+                        data: DesktopTaskDragPayload.fromTask(task),
+                        maxSimultaneousDrags: widget.enabled ? 1 : 0,
+                        dragAnchorStrategy: pointerDragAnchorStrategy,
+                        feedback: Material(
+                          elevation: 8,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Text(task.title),
+                          ),
+                        ),
+                        onDragStarted: () => widget.onDragStarted(
+                          DesktopTaskDragPayload.fromTask(task),
+                        ),
+                        onDragUpdate: (details) =>
+                            widget.onDragMove(details.globalPosition),
+                        onDragEnd: (_) => widget.onDragCanceled(),
+                        child: Tooltip(
+                          message: 'Drag to reorder ${task.title}',
+                          // A tooltip long press would win the handle's drag.
+                          triggerMode: TooltipTriggerMode.manual,
+                          child: SizedBox(
+                            key: Key('touch-reorder-${task.id.value}'),
+                            width: 48,
+                            height: 48,
+                            child: const Icon(Icons.drag_handle),
+                          ),
+                        ),
+                      ),
                     if (!widget.selectionMode) actions,
                   ],
                 ),

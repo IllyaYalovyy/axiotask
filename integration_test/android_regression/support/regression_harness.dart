@@ -70,6 +70,13 @@ void regressionCase(
   ExportDestinationFactory? exportDestination,
 }) {
   testWidgets(id, (tester) async {
+    final originalErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      // Retain layout creators/stacks even when a contract calls takeException.
+      debugPrint(details.toString());
+      originalErrorHandler?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = originalErrorHandler);
     final teardown = _Teardown(id);
     RegressionFixture? fixture;
     Object? failure;
@@ -125,7 +132,9 @@ void regressionCase(
       failureStack = stackTrace;
       _emit(CaseEvent(id, label: label, passed: false, error: '$error'));
       if (fixture != null) {
-        await _guarded(() => fixture!.capture(tester, 'failure'));
+        await _guarded(
+          () => fixture!.capture(tester, 'failure', settle: false),
+        );
       }
     }
     final teardownErrors = await teardown.run(tester);
@@ -186,7 +195,7 @@ final class RegressionFixture {
   AppDatabase database;
   final ManualClock clock;
   final ControlledSyncHealth health;
-  final InMemoryDevicePreferencesBackend devicePreferences;
+  final DevicePreferencesBackend devicePreferences;
   StoredPreferencesRepository preferences;
   DatabaseTasksRepository tasksRepository;
   final AccountId account;
@@ -205,6 +214,7 @@ final class RegressionFixture {
 
   /// Number of refresh requests the UI issued; nothing reaches Google.
   int refreshRequests = 0;
+  Future<void> Function()? onRefresh;
 
   /// Sync controls the UI invoked through the view model's coordinator
   /// ports, in order; nothing reaches Google.
@@ -368,8 +378,11 @@ final class RegressionFixture {
       );
     }
 
-    final devicePreferences = InMemoryDevicePreferencesBackend();
-    final preferences = _preferences(database, devicePreferences);
+    final DevicePreferencesBackend devicePreferences = Platform.isAndroid
+        ? SharedPreferencesAsyncBackend()
+        : InMemoryDevicePreferencesBackend();
+    await _clearDevicePreferences(devicePreferences, caseId);
+    final preferences = _preferences(database, devicePreferences, caseId);
     await preferences.setOnboardingDismissed(true);
 
     final fixture = RegressionFixture._(
@@ -406,7 +419,10 @@ final class RegressionFixture {
     syncHealthRepository: health,
     clock: clock,
     preferencesRepository: preferences,
-    refreshRequested: () async => refreshRequests += 1,
+    refreshRequested: () async {
+      refreshRequests += 1;
+      await onRefresh?.call();
+    },
     retryRequested: () => _control(SyncControl.retry),
     reauthorizeRequested: () => _control(SyncControl.reauthorize),
     resumeSyncRequested: () => _control(SyncControl.resume),
@@ -430,7 +446,7 @@ final class RegressionFixture {
     await database.close();
     database = await AppDatabase.openFile(_databaseFile(directory, caseId));
     tasksRepository = DatabaseTasksRepository(database, clock: clock);
-    preferences = _preferences(database, devicePreferences);
+    preferences = _preferences(database, devicePreferences, caseId);
     model = _createModel();
     await tester.pumpWidget(
       RepaintBoundary(
@@ -502,6 +518,7 @@ final class RegressionFixture {
   Future<void> close() async {
     model.dispose();
     await health.close();
+    await _clearDevicePreferences(devicePreferences, caseId);
     await database.close();
     await directory.delete(recursive: true);
   }
@@ -510,14 +527,29 @@ final class RegressionFixture {
 File _databaseFile(Directory directory, String caseId) =>
     File('${directory.path}/$caseId.sqlite');
 
+Future<void> _clearDevicePreferences(
+  DevicePreferencesBackend backend,
+  String caseId,
+) async {
+  for (final key in [
+    'theme',
+    'density',
+    'onboarding_dismissed',
+    'desktop_workspace',
+  ]) {
+    await backend.remove('regression-$caseId.$key');
+  }
+}
+
 StoredPreferencesRepository _preferences(
   AppDatabase database,
-  InMemoryDevicePreferencesBackend devicePreferences,
+  DevicePreferencesBackend devicePreferences,
+  String caseId,
 ) => StoredPreferencesRepository(
   relational: DriftRelationalPreferences(database),
   device: DevicePreferencesAdapter(
     backend: devicePreferences,
-    namespace: 'regression',
+    namespace: 'regression-$caseId',
     diagnostics: ProductionDiagnosticSink(InMemoryDiagnosticHistory()),
   ),
 );

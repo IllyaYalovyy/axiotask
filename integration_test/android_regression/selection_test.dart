@@ -255,6 +255,8 @@ Future<void> _longPressSelection(WidgetTester t, RegressionFixture f) async {
   expect(f.model.state.bulkSelectedTaskIds, isEmpty);
   expect(find.text('2 selected tasks deleted'), findsOneWidget);
   await f.capture(t, 'delete_undo_offer_320_landscape_2x');
+  await t.ensureVisible(find.text('Undo all'));
+  await t.pumpAndSettle();
   await t.tap(find.text('Undo all').hitTestable());
   await settleUntil(
     t,

@@ -33,6 +33,28 @@ import '../../support/selection_toolbar.dart';
 import '../../support/touch_targets.dart';
 
 void main() {
+  group('short phone feedback keeps task rows available', () {
+    setUpAll(loadAndroidTextFont);
+    for (final outcome in SyncHealthOutcome.values) {
+      testWidgets('startup and $outcome at landscape 2x', (tester) async {
+        await _pumpPhoneShell(
+          tester,
+          const PhoneViewport(320, PhoneOrientation.landscape, 2),
+          health: _health(outcome),
+        );
+        expect(tester.takeException(), isNull);
+        final feedback = tester.getSize(
+          find.byKey(const Key('shell-feedback-scroll')),
+        );
+        expect(feedback.height, lessThanOrEqualTo(124));
+        final rows = find.byKey(const Key('desktop-task-scroll'));
+        expect(tester.getSize(rows).height, greaterThan(48));
+        await tester.ensureVisible(find.text('Cached parent'));
+        expect(find.text('Cached parent').hitTestable(), findsOneWidget);
+      });
+    }
+  });
+
   for (final width in <double>[412, 1280]) {
     testWidgets('routine sync stays compact at width $width', (tester) async {
       tester.view.physicalSize = Size(width, 900);
@@ -3243,6 +3265,8 @@ void main() {
           ),
         ]);
         await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text('Undo all'));
+        await tester.pumpAndSettle();
         await tester.tap(find.text('Undo all').hitTestable());
         await tester.pumpAndSettle();
         expect(fixture.tasks.groupUndos.single.groupId, 91);
@@ -3867,6 +3891,30 @@ void main() {
     final row13 = find.byKey(const Key('desktop-task-row-13'));
     final sheet = find.byKey(const Key('quick-date-sheet'));
 
+    testWidgets('35 touch handle drops through the shared move command', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      final handle = find.byKey(const Key('touch-reorder-13'));
+      final gesture = await tester.startGesture(tester.getCenter(handle));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(fixture.viewModel.state.isBulkSelectionActive, isFalse);
+      await gesture.moveTo(tester.getTopLeft(row11) + const Offset(100, 8));
+      await tester.pump();
+      expect(
+        find.byKey(const Key('desktop-task-drop-indicator-11')),
+        findsOneWidget,
+      );
+      await gesture.up();
+      await tester.pumpAndSettle();
+      final command = fixture.tasks.applied.single as MoveTaskCommand;
+      expect(command.taskId, const TaskId(13));
+      expect(command.parentTaskId, isNull);
+      expect(command.previousTaskId, isNull);
+      expect(fixture.viewModel.state.isBulkSelectionActive, isFalse);
+      expect(fixture.tasks.dueChanges, isEmpty);
+    });
+
     Future<void> chooseFromSheet(WidgetTester tester, String label) async {
       await tester.tap(find.descendant(of: sheet, matching: find.text(label)));
       await tester.pumpAndSettle();
@@ -4456,6 +4504,7 @@ Future<_ShellFixture> _pumpPhoneShell(
   DensityPreference density = DensityPreference.standard,
   Clock? clock,
   CachedTasksSnapshot? snapshot,
+  SyncHealth? health,
 }) async {
   // Android status and navigation bars take room from the shell.
   tester.view
@@ -4469,7 +4518,7 @@ Future<_ShellFixture> _pumpPhoneShell(
   final preferences = _WorkspacePreferences()
     ..current = const DevicePreferences.defaults().copyWith(density: density);
   final fixture = _ShellFixture(
-    _health(SyncHealthOutcome.good),
+    health ?? _health(SyncHealthOutcome.good),
     preferencesRepository: preferences,
     taskListsRepository: _TaskListsRepository(),
     clock: clock,

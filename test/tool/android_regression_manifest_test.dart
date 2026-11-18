@@ -64,6 +64,8 @@ const _correctedAuditFailures = <String, String>{
   '23_detail_previous_next': 'android-task-details',
   '32_subtask_swipe_schedule': 'android-touch-gestures',
   '33_parent_completion_cascade': 'android-completion-semantics',
+  '34_pull_to_refresh': 'android-touch-gestures',
+  '35_touch_reorder': 'android-touch-gestures',
 };
 
 /// Screenshot-backed findings beyond the 36 audit cases whose corrective
@@ -73,6 +75,7 @@ const _correctedFindings = <String, String>{
   'bottom-navigation': 'android-home-navigation',
   'task-row-metadata': 'android-home-navigation',
   'failure-message-usability': 'android-sync-status-feedback',
+  'subtask-touch-reorder': 'android-touch-gestures',
 };
 
 const _auditPassingNumbers = <String>{
@@ -91,6 +94,22 @@ void main() {
 
   test('contains every stable audit case exactly once', () {
     expect(cases.map((entry) => entry.id), _auditCaseIds);
+  });
+
+  test('complete entrypoint includes every implemented suite exactly once', () {
+    final source = File(
+      'integration_test/android_regression/complete_test.dart',
+    ).readAsStringSync();
+    final imports = RegExp(r"import '([^']+)' as (\w+);")
+        .allMatches(source)
+        .toList();
+    final expected = manifest.entries
+        .map((entry) => entry.testPath.split('/').last)
+        .toSet();
+    expect(imports.map((entry) => entry[1]), unorderedEquals(expected));
+    for (final entry in imports) {
+      expect('${entry[2]}.main();'.allMatches(source), hasLength(1));
+    }
   });
 
   test('baseline is exactly the 17 audit passes with their labels', () {

@@ -146,6 +146,22 @@ void main() {
   );
 
   test(
+    'failed refresh clears progress and exposes a recoverable message',
+    () async {
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: _TasksRepository(),
+        syncHealthRepository: _HealthRepository(),
+        refreshRequested: () async => throw StateError('offline'),
+      );
+      addTearDown(viewModel.dispose);
+      await viewModel.refresh();
+      expect(viewModel.state.isRefreshing, isFalse);
+      expect(viewModel.state.syncControlFailureMessage, contains('retry'));
+    },
+  );
+
+  test(
     'Refresh delegates once while the foreground verification is active',
     () async {
       final tasks = _TasksRepository();
@@ -169,10 +185,12 @@ void main() {
       final duplicate = viewModel.refresh();
       expect(viewModel.state.isRefreshing, isTrue);
       expect(calls, 1);
+      viewModel.selectSmartView(SmartView.upcoming);
       refresh.complete();
       await Future.wait(<Future<void>>[first, duplicate]);
 
       expect(viewModel.state.isRefreshing, isFalse);
+      expect(viewModel.state.selectedSmartView, SmartView.upcoming);
       expect(calls, 1);
       expect(diagnosticHistory.records.map((record) => record.code), <String>[
         'ui.refresh_started',
@@ -186,6 +204,53 @@ void main() {
       );
     },
   );
+
+  for (final fails in [false, true]) {
+    test(
+      'refresh completion after disposal is safe (failure: $fails)',
+      () async {
+        final completion = Completer<void>();
+        final viewModel = TasksViewModel(
+          accountId: const AccountId(1),
+          tasksRepository: _TasksRepository(),
+          syncHealthRepository: _HealthRepository(),
+          refreshRequested: () => completion.future,
+        );
+        var notifications = 0;
+        viewModel.addListener(() => notifications++);
+        final pending = viewModel.refresh();
+        viewModel.dispose();
+        final before = notifications;
+        if (fails) {
+          completion.completeError(StateError('offline after navigation'));
+        } else {
+          completion.complete();
+        }
+        await pending;
+        expect(notifications, before);
+      },
+    );
+  }
+
+  test('a synchronously rejected refresh permits a successful retry', () async {
+    var calls = 0;
+    final viewModel = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: _TasksRepository(),
+      syncHealthRepository: _HealthRepository(),
+      refreshRequested: () {
+        if (++calls == 1) throw StateError('offline');
+        return Future<void>.value();
+      },
+    );
+    addTearDown(viewModel.dispose);
+    await viewModel.refresh();
+    expect(viewModel.state.syncControlFailureMessage, isNotNull);
+    await viewModel.refresh();
+    expect(calls, 2);
+    expect(viewModel.state.isRefreshing, isFalse);
+    expect(viewModel.state.syncControlFailureMessage, isNull);
+  });
 
   test(
     'Stop, Resume, and Retry delegate once and expose deterministic progress',

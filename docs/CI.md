@@ -23,7 +23,7 @@ with the SDK constraints and reviewed golden baselines.
 - All `capture_linux_*_screenshots.sh` synthetic desktop capture scripts. Captures
   are evidence for human inspection; golden comparisons run in the Flutter suite.
 - SQLite and preferences native integration probes on an Android API 36 emulator.
-- The 17-case Android behavior regression `baseline` subset on the same emulator,
+- The complete 40-contract Android behavior regression suite on the same emulator,
   with per-case outcomes, device facts and screenshots in `android-evidence-<commit>`.
 - A Linux release build and an Android debug build, including verification that
   SQLite is packaged for all three Android ABIs.
@@ -86,3 +86,72 @@ another debug key or the unregistered certificate used by v1.5.3–v1.5.5.
 Only the publication job receives repository contents write permission.
 Packaging tools and the GNOME 49 Flatpak runtime/SDK are installed on disposable
 GitHub runners; the workflow does not install anything on the developer machine.
+
+### Android candidate qualification before publication
+
+The Android integration job runs the complete manifest, not just the 17-case
+baseline. Publication also runs `scripts/check_android_qualification.py` against
+that run's acceptance evidence and the exact distribution APK. A missing or
+failed acceptance job already blocks publication through `needs`; the checker
+additionally rejects dirty/stale commits, missing/duplicate/failed cases,
+manifest mismatches, changed production installs, and infrastructure failures.
+
+Physical-device qualification is separate from instrumented debug testing. The
+publication job downloads `android-release-qualification-<full source SHA>` from
+the trusted repository Actions run identified by repository variable
+`ANDROID_QUALIFICATION_RUN_ID`. Leave that variable unset until qualification is
+available: publication deliberately fails closed. Qualify the exact APK from
+the distribution artifact on an isolated physical target, preserve inspected
+comparison screenshots, upload the qualification artifact, then rerun the
+publication job. Do not rebuild or substitute the APK after qualification.
+
+The artifact contains `smoke.json` and screenshot files. Schema version 1 requires
+`source_commit`, `apk_sha256`, `application_id` (`com.axiotask.app`),
+`signing_certificate_sha256` (the pinned certificate above), `debuggable: false`,
+`execution_mode: "signed-release-physical"`, and `device` with `kind: "physical"`,
+nonempty `serial`/`model` and integer `api`. Its `checks` object must have exactly
+these boolean true entries: `install`, `launch`, `menu`,
+`capture_edit_persistence`, `completion_undo`, `navigation`, and
+`comparison_screenshots_reviewed`. `reviewed_by` identifies the visual reviewer.
+Each entry in `screenshots` contains a `stage`, relative `path` and matching
+`sha256`. Distinct images are required for `launch`, `menu`,
+`capture_edit_persistence`, `completion_undo`, and `navigation`; paths outside
+the artifact are rejected. The checker independently measures the
+APK digest, signing certificate, package ID and debuggable flag using SDK tools.
+
+These fields are evidence records, not instructions to mark unexecuted checks
+passed. Missing physical/signing access leaves qualification outstanding.
+
+`scripts/smoke_android_candidate.py` collects evidence from an isolated target
+that has no existing `com.axiotask.app` installation. It verifies the exact APK
+signer/package, installs and launches it, executes a reviewed accessibility-label
+scenario, restarts for the persistence check, and captures workflow screenshots
+and their hashes. It refuses to replace an installed app. Supply a JSON scenario
+with four arrays: `menu`, `capture_edit_persistence`, `completion_undo`, and
+`navigation`. Steps use `{"action":"tap","label":"..."}`,
+`{"action":"expect","label":"..."}`, `{"action":"text","value":"Synthetic text"}`,
+`{"action":"back"}`, or `{"action":"relaunch"}`. Every flow must assert an
+outcome, and persistence must assert after relaunch. Use labels observed on the
+candidate and a synthetic account; do not enter personal credentials in the
+scenario. Missing or ambiguous labels fail the run and retain incomplete evidence.
+
+```bash
+python3 scripts/smoke_android_candidate.py --isolated-target \
+  --apk /path/to/exact-candidate.apk --commit FULL_SOURCE_SHA \
+  --device SERIAL --scenario /path/to/reviewed-scenario.json \
+  --artifacts test-results/candidate-smoke \
+  --apksigner "$ANDROID_HOME/build-tools/VERSION/apksigner" \
+  --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+```
+
+The collector leaves `comparison_screenshots_reviewed` false and `reviewed_by`
+empty. Inspect the captured images against the v1.5.3 acceptance basis before
+recording those two fields. Emulator output is marked `signed-release-emulator`
+and cannot satisfy the physical-device release guard. The collector's scenario
+validation has automated tests; execution against a signed physical candidate
+remains outstanding until that target is available.
+
+`bash test/android_qualification_test.sh` exercises accepted synthetic evidence
+and rejection of incomplete, stale, wrong-mode and mismatched evidence. No
+physical candidate qualification or release publication is implied by those
+synthetic tests.
