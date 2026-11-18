@@ -85,6 +85,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Synthetic linked task'));
     await tester.pump();
+    await _expandPhoneLinks(tester);
 
     expect(find.text('Open in Google Tasks'), findsOneWidget);
     expect(
@@ -120,6 +121,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Synthetic linked task'));
     await tester.pump();
+    await _expandPhoneLinks(tester);
 
     expect(
       find.textContaining('Google has not provided a usable link'),
@@ -145,6 +147,7 @@ void main() {
     await tester.pump();
     await tester.tap(find.text('Synthetic linked task'));
     await tester.pump();
+    await _expandPhoneLinks(tester);
     final googleAction = find.byKey(const Key('open-in-google-tasks-action'));
     await tester.ensureVisible(googleAction);
     await tester.tap(googleAction);
@@ -159,6 +162,14 @@ void main() {
     expect(find.text('Could not open the external link.'), findsOneWidget);
     expect(launcher.launched, hasLength(2));
   });
+}
+
+Future<void> _expandPhoneLinks(WidgetTester tester) async {
+  final links = find.widgetWithText(ExpansionTile, 'Google Tasks');
+  if (links.evaluate().isEmpty) return;
+  await tester.ensureVisible(links);
+  await tester.tap(find.text('Google Tasks'));
+  await tester.pumpAndSettle();
 }
 
 final class _Fixture {

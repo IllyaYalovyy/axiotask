@@ -658,6 +658,7 @@ void main() {
       final detail = TaskDetailViewModel.fromTasks(fixture.viewModel);
       await tester.pumpWidget(
         MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.linux),
           home: Scaffold(
             body: AnimatedBuilder(
               animation: detail,
@@ -1022,7 +1023,12 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
       addTearDown(fixture.dispose);
-      await tester.pumpWidget(fixture.widget);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
       await tester.pump();
       await tester.tap(find.text('Cached parent'));
       await tester.pumpAndSettle();
@@ -1075,7 +1081,7 @@ void main() {
         '11 title Renamed parent',
         '11 notes Line one\nLine two',
       ]);
-      expect(find.text('Changes save automatically'), findsOneWidget);
+      expect(find.text('Unsaved changes'), findsNothing);
       expect(find.widgetWithText(FilledButton, 'Save'), findsNothing);
     });
 
@@ -1097,12 +1103,17 @@ void main() {
         ),
       );
       addTearDown(fixture.dispose);
-      await tester.pumpWidget(fixture.widget);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
       await tester.pump();
       await tester.tap(find.textContaining('Padded parent'));
       await tester.pumpAndSettle();
       expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
-      expect(find.text('Changes save automatically'), findsOneWidget);
+      expect(find.text('Unsaved changes'), findsNothing);
       expect(
         find.text('Enter a title. The saved title stays until you do.'),
         findsNothing,
@@ -1486,7 +1497,12 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
       addTearDown(fixture.dispose);
-      await tester.pumpWidget(fixture.widget);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android),
+          home: AdaptiveShell(viewModel: fixture.viewModel),
+        ),
+      );
       await tester.pump();
       await tester.tap(find.text('Cached parent'));
       await tester.pumpAndSettle();
@@ -2786,22 +2802,27 @@ void main() {
         await tester.pumpAndSettle();
         expect(state().selectedTaskId, const TaskId(11));
 
-        // A disabled control at the boundary keeps its 48 dp footprint.
-        expect(
-          tester.getSize(find.byKey(const Key('task-detail-previous'))),
-          const Size(48, 48),
-        );
-        expect(_detailNavigationEnabled(tester), (false, true));
-        await tester.tap(find.byKey(const Key('task-detail-previous')));
+        // Disabled boundary items retain a full touch-sized footprint.
+        await _togglePhoneDetailMenu(tester);
+        final previous = find.byKey(const Key('task-detail-previous'));
+        await tester.ensureVisible(previous);
+        expect(tester.getSize(previous).width, greaterThanOrEqualTo(48));
+        expect(tester.getSize(previous).height, greaterThanOrEqualTo(48));
+        await _togglePhoneDetailMenu(tester);
+        expect(await _detailNavigationEnabled(tester), (false, true));
+        await _tapPhoneDetailNavigation(tester, 'task-detail-previous');
         await tester.pumpAndSettle();
         expect(state().selectedTaskId, const TaskId(11), reason: 'boundary');
 
         // Collection order: Shared title, Leaf task, Another leaf.
-        await tester.tap(find.byKey(const Key('task-detail-next')));
+        await _tapPhoneDetailNavigation(tester, 'task-detail-next');
         await tester.pumpAndSettle();
         expect(state().selectedTaskId, const TaskId(13));
         expect(find.widgetWithText(TextField, 'Leaf task'), findsOneWidget);
-        expect(_detailNavigationEnabled(tester), (true, true));
+        expect(await _detailNavigationEnabled(tester), (true, true));
+        await _togglePhoneDetailMenu(tester);
+        await tester.ensureVisible(find.byKey(const Key('task-detail-next')));
+        await tester.pumpAndSettle();
         final previousRegion = expectTouchTarget(
           tester,
           find.byKey(const Key('task-detail-previous')),
@@ -2832,19 +2853,20 @@ void main() {
             isFalse,
           );
         }
+        await _togglePhoneDetailMenu(tester);
         expect(
           tester.getTopLeft(find.byKey(const Key('task-detail-title'))).dy,
-          greaterThanOrEqualTo(nextRegion.bottom),
-          reason: 'the title gets its own full-width line',
+          greaterThanOrEqualTo(tester.getRect(find.byType(AppBar)).bottom),
+          reason: 'the editable title stays below its app bar',
         );
-        await tester.tap(find.byKey(const Key('task-detail-next')));
+        await _tapPhoneDetailNavigation(tester, 'task-detail-next');
         await tester.pumpAndSettle();
         expect(state().selectedTaskId, const TaskId(15));
-        expect(_detailNavigationEnabled(tester), (true, false));
-        await tester.tap(find.byKey(const Key('task-detail-next')));
+        expect(await _detailNavigationEnabled(tester), (true, false));
+        await _tapPhoneDetailNavigation(tester, 'task-detail-next');
         await tester.pumpAndSettle();
         expect(state().selectedTaskId, const TaskId(15), reason: 'boundary');
-        await tester.tap(find.byKey(const Key('task-detail-previous')));
+        await _tapPhoneDetailNavigation(tester, 'task-detail-previous');
         await tester.pumpAndSettle();
         expect(state().selectedTaskId, const TaskId(13));
 
@@ -2878,7 +2900,10 @@ void main() {
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(state().selectedTaskId, const TaskId(16));
-      expect(_detailNavigationEnabled(tester), (false, false), reason: 'alone');
+      expect(await _detailNavigationEnabled(tester), (
+        false,
+        false,
+      ), reason: 'alone');
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(state().selectedTaskId, isNull);
@@ -2899,11 +2924,11 @@ void main() {
       await tester.tap(find.text('Second child'));
       await tester.pumpAndSettle();
       expect(state().selectedTaskId, const TaskId(14));
-      expect(_detailNavigationEnabled(tester), (true, false));
-      await tester.tap(find.byKey(const Key('task-detail-previous')));
+      expect(await _detailNavigationEnabled(tester), (true, false));
+      await _tapPhoneDetailNavigation(tester, 'task-detail-previous');
       await tester.pumpAndSettle();
       expect(state().selectedTaskId, const TaskId(12));
-      expect(_detailNavigationEnabled(tester), (false, true));
+      expect(await _detailNavigationEnabled(tester), (false, true));
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       expect(state().selectedTaskId, const TaskId(11));
@@ -2924,7 +2949,7 @@ void main() {
       await tester.pump();
       expect(fixture.tasks.applied, isEmpty, reason: 'still debouncing');
 
-      await tester.tap(find.byKey(const Key('task-detail-next')));
+      await _tapPhoneDetailNavigation(tester, 'task-detail-next');
       await tester.pumpAndSettle();
       expect(fixture.viewModel.state.selectedTaskId, const TaskId(15));
       final title = fixture.tasks.applied.single as SetTaskTitleCommand;
@@ -2972,7 +2997,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
-    expect(_detailNavigationEnabled(tester), (false, true));
+    expect(await _detailNavigationEnabled(tester), (false, true));
 
     await tester.tap(find.byKey(const Key('task-detail-next')));
     await tester.pumpAndSettle();
@@ -3563,7 +3588,7 @@ void main() {
         expectReachable(
           tester,
           submit,
-          label: 'Add task',
+          label: 'Save',
           keyboardTop: keyboardTop,
         );
         final titleRect = tester.getRect(title);
@@ -3592,8 +3617,9 @@ void main() {
       expect(fixture.tasks.created.single.title, 'Phone capture one');
       expect(fixture.tasks.created.single.notes, 'First line\nSecond line');
       expect(fixture.tasks.created.single.taskListId, const TaskListId(8));
-      // Rapid entry: still open, cleared and focused on the title.
-      expect(composer, findsOneWidget);
+      // Save returns to the list; a new capture starts empty and focused.
+      expect(composer, findsNothing);
+      await openComposer(tester);
       expect(text(tester, title), isEmpty);
       expect(text(tester, notes), isEmpty);
       expect(focused(tester, title), isTrue);
@@ -3677,7 +3703,11 @@ void main() {
       expect(fixture.tasks.created, hasLength(2));
       expect(fixture.tasks.created.last.title, 'Survives failure');
       expect(fixture.tasks.created.last.notes, 'Kept notes');
-      expect(text(tester, notes), isEmpty);
+      expect(
+        composer,
+        findsNothing,
+        reason: 'Successful retry dismisses the sheet',
+      );
     });
 
     testWidgets('Back lowers the keyboard, then closes; Cancel discards', (
@@ -3749,12 +3779,7 @@ void main() {
       expect(composer, findsOneWidget);
       expect(text(tester, title), 'Rotated capture');
       expect(text(tester, notes), 'Rotated notes');
-      expectReachable(
-        tester,
-        submit,
-        label: 'Add task',
-        keyboardTop: keyboardTop,
-      );
+      expectReachable(tester, submit, label: 'Save', keyboardTop: keyboardTop);
       expectReachable(
         tester,
         cancel,
@@ -3774,7 +3799,7 @@ void main() {
       ).logicalSize;
       await lowerKeyboard(tester);
       expect(tester.takeException(), isNull);
-      expect(composer, findsOneWidget);
+      expect(composer, findsNothing);
     });
 
     testWidgets('the quick-add shortcut never opens a composer over details', (
@@ -3904,6 +3929,11 @@ void main() {
       tester,
     ) async {
       final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      await tester.tap(find.byTooltip('Collection actions'));
+      await tester.pumpAndSettle();
+      expect(find.text('Select tasks'), findsOneWidget);
+      await tester.tap(find.text('Reorder tasks'));
+      await tester.pumpAndSettle();
       final handle = find.byKey(const Key('touch-reorder-13'));
       final gesture = await tester.startGesture(tester.getCenter(handle));
       await tester.pump(const Duration(milliseconds: 600));
@@ -3922,6 +3952,12 @@ void main() {
       expect(command.previousTaskId, isNull);
       expect(fixture.viewModel.state.isBulkSelectionActive, isFalse);
       expect(fixture.tasks.dueChanges, isEmpty);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(handle, findsNothing, reason: 'Back leaves reorder mode');
+      expect(row11, findsOneWidget);
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+      expect(fixture.tasks.applied, hasLength(1));
     });
 
     Future<void> chooseFromSheet(WidgetTester tester, String label) async {
@@ -4165,6 +4201,8 @@ void main() {
       await tester.ensureVisible(due);
       await tester.pumpAndSettle();
       await tester.tap(due);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Choose date'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Choose date').hitTestable());
       await tester.pumpAndSettle();
@@ -4594,6 +4632,7 @@ final class _ShellFixture {
   late final TasksViewModel viewModel;
 
   Widget get widget => MaterialApp(
+    theme: ThemeData(platform: TargetPlatform.linux),
     home: AdaptiveShell(
       viewModel: viewModel,
       preferencesRepository: preferencesRepository,
@@ -4952,16 +4991,42 @@ Finder _searchHit(String match) => find.ancestor(
 );
 
 /// Whether the details' Previous and Next controls are enabled.
-(bool, bool) _detailNavigationEnabled(WidgetTester tester) => (
-  tester
-          .widget<IconButton>(find.byKey(const Key('task-detail-previous')))
-          .onPressed !=
-      null,
-  tester
-          .widget<IconButton>(find.byKey(const Key('task-detail-next')))
-          .onPressed !=
-      null,
-);
+Future<(bool, bool)> _detailNavigationEnabled(WidgetTester tester) async {
+  final phone = find.byType(AppBar).evaluate().isNotEmpty;
+  if (phone) await _togglePhoneDetailMenu(tester);
+  bool enabled(String key) {
+    final widget = tester.widget(find.byKey(Key(key)));
+    return switch (widget) {
+      IconButton(:final onPressed) => onPressed != null,
+      PopupMenuItem<Object?>(:final enabled) => enabled,
+      _ => throw StateError('Unexpected navigation control'),
+    };
+  }
+
+  final result = (enabled('task-detail-previous'), enabled('task-detail-next'));
+  if (phone) await _togglePhoneDetailMenu(tester);
+  return result;
+}
+
+Future<void> _togglePhoneDetailMenu(WidgetTester tester) async {
+  if (find.byKey(const Key('task-detail-next')).evaluate().isNotEmpty) {
+    await tester.binding.handlePopRoute();
+  } else {
+    await tester.tap(find.byKey(const Key('task-detail-actions-menu')));
+  }
+  await tester.pumpAndSettle();
+}
+
+Future<void> _tapPhoneDetailNavigation(WidgetTester tester, String key) async {
+  await _togglePhoneDetailMenu(tester);
+  final control = find.byKey(Key(key));
+  await tester.ensureVisible(control);
+  await tester.pumpAndSettle();
+  final enabled = tester.widget<PopupMenuItem<Object?>>(control).enabled;
+  await tester.tap(control);
+  await tester.pumpAndSettle();
+  if (!enabled) await _togglePhoneDetailMenu(tester);
+}
 
 CachedTask _navigationTask(int id, String title, {int list = 7, int? parent}) =>
     CachedTask(

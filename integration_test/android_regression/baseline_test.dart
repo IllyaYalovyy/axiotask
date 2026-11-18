@@ -35,8 +35,8 @@ void main() {
 
   regressionCase('07_quick_capture_twice', phoneOnHost: true, (t, f) async {
     const titles = <String>['Captured first', 'Captured second'];
-    await _openPhoneComposer(t);
     for (final title in titles) {
+      await _openPhoneComposer(t);
       await t.enterText(find.byKey(const Key('quick-add-input')), title);
       await t.pump();
       await t.tap(find.byKey(const Key('quick-add-submit')));
@@ -45,6 +45,8 @@ void main() {
         () async => (await f.tasks()).any((task) => task.title == title),
         description: '"$title" to persist',
       );
+      await t.pumpAndSettle();
+      expect(find.byKey(const Key('composer-surface')), findsNothing);
     }
     final captured = (await f.tasks()).where(
       (task) => titles.contains(task.title),
@@ -52,14 +54,15 @@ void main() {
     expect(captured.map((task) => task.title), unorderedEquals(titles));
     expect(captured.map((task) => task.taskListId).toSet(), {f.list});
     expect(captured.map((task) => task.id).toSet(), hasLength(2));
-    // The composer stays open, empty and ready for a third capture.
-    expect(find.byKey(const Key('composer-surface')), findsOneWidget);
+    // Saving returns to the collection; the next capture starts fresh.
+    expect(find.byKey(const Key('composer-surface')), findsNothing);
     expect(find.text('Captured second'), findsOneWidget, reason: 'Listed');
   });
 
   regressionCase('10_edit_save_persists', (t, f) async {
     await f.openParent(t);
-    await t.tap(find.byTooltip('Edit task content'));
+    await _openPhoneTaskActions(t);
+    await t.tap(find.text('Edit task').hitTestable());
     await t.pumpAndSettle();
     await t.enterText(_textFieldLabelled('Notes'), 'Edited audit notes');
     await t.tap(find.widgetWithText(FilledButton, 'Save'));
@@ -123,6 +126,7 @@ void main() {
 
   regressionCase('16_move_task_persists', (t, f) async {
     await f.openParent(t);
+    await _openPhoneTaskActions(t);
     await t.ensureVisible(find.text('Move to list'));
     await t.tap(find.text('Move to list'));
     await t.pumpAndSettle();
@@ -483,6 +487,7 @@ void main() {
         .toList();
     expect(topLevelOrder(), <TaskId>[f.parent, f.second]);
     await f.openParent(t);
+    await _openPhoneTaskActions(t);
     await t.ensureVisible(find.text('Move down'));
     await t.tap(find.text('Move down'));
     await settleUntil(
@@ -494,6 +499,14 @@ void main() {
     expect(topLevelOrder(), <TaskId>[f.second, f.parent]);
     expect((await f.task(f.child)).parentTaskId, f.parent);
   });
+}
+
+/// Phone secondary commands live in the app-bar menu; desktop keeps its
+/// inspector controls. Both paths exercise the same persisted commands.
+Future<void> _openPhoneTaskActions(WidgetTester t) async {
+  if (find.byType(AppBar).evaluate().isEmpty) return;
+  await t.tap(find.byKey(const Key('task-detail-actions-menu')));
+  await t.pumpAndSettle();
 }
 
 /// Opens the phone composer with its floating add button.

@@ -126,7 +126,7 @@ Rect measureHitRegion(WidgetTester tester, Finder control) {
   return region;
 }
 
-/// Asserts [control] is a labelled, tappable button whose touch hit region
+/// Asserts [control] is a labelled, tappable button or menu item whose hit region
 /// and accessibility focus area are at least 48 × 48 logical pixels.
 Rect expectTouchTarget(
   WidgetTester tester,
@@ -152,9 +152,9 @@ Rect expectTouchTarget(
     reason: '$label exposes a tap action to assistive technology',
   );
   expect(
-    data.flagsCollection.isButton,
+    data.flagsCollection.isButton || data.role == SemanticsRole.menuItem,
     isTrue,
-    reason: '$label is announced as a button',
+    reason: '$label is announced as a button or menu item',
   );
   expect(
     '${data.label}\n${data.tooltip}',

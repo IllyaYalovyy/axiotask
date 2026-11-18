@@ -54,6 +54,11 @@ void main() {
       expect(find.byKey(Key('touch-reorder-${f.second.value}')), findsNothing);
       await f.model.setViewSort(ViewSort.manual);
       await t.pumpAndSettle();
+      expect(find.byKey(Key('touch-reorder-${f.second.value}')), findsNothing);
+      await t.tap(find.byTooltip('Collection actions'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Reorder tasks'));
+      await t.pumpAndSettle();
       final handle = find.byKey(Key('touch-reorder-${f.second.value}'));
       await t.ensureVisible(handle);
       final cancelled = await t.startGesture(t.getCenter(handle));
@@ -78,9 +83,17 @@ void main() {
       expect(f.model.state.isBulkSelectionActive, isFalse);
       expect((await f.task(f.second)).status, TaskStatus.needsAction);
       await f.capture(t, 'touch_reordered');
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(handle, findsNothing, reason: 'Back leaves reorder mode');
+      expect(f.row(f.parent), findsOneWidget);
       await f.restartApp(t);
       expect((await order()).first, f.second);
       expect((await order()).toSet(), initial.toSet());
+      await t.tap(find.byTooltip('Collection actions'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Reorder tasks'));
+      await t.pumpAndSettle();
 
       // Move the first row to the end, then back to the middle. Verify the
       // repository order after each drop, not only the visual preview.

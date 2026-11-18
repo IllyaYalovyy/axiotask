@@ -321,11 +321,7 @@ List<String> _rowTitles(RegressionFixture f) =>
     f.model.state.visibleTasks.map((task) => task.title).toList();
 
 String? _headerTitle(WidgetTester t) {
-  final texts = find.descendant(
-    of: find.byKey(const Key('collection-header')),
-    matching: find.byType(Text),
-  );
-  return t.widget<Text>(texts.first).data;
+  return t.widget<Text>(find.byKey(const Key('phone-collection-title'))).data;
 }
 
 void _expectActive(WidgetTester t, SmartView? active) {
@@ -383,7 +379,7 @@ void _expectReachableBar(WidgetTester t, PhoneViewport viewport) {
       );
       final addRect = t.getRect(add);
       for (final control in <Finder>[
-        find.byKey(const Key('bulk-select-open')),
+        find.byTooltip('Sort tasks'),
         find.byTooltip('Collection actions'),
       ]) {
         final rect = t.getRect(control);

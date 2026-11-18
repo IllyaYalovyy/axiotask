@@ -69,9 +69,7 @@ void main() {
     expect(find.byKey(const Key('sync-health-good')).hitTestable(), findsOne);
     final collection = find.byKey(const Key('collection-header-scroll'));
     final collectionTop = t.getTopLeft(collection);
-    final header = t.getRect(
-      find.byKey(const Key('desktop-application-header')),
-    );
+    final header = t.getRect(find.byKey(const Key('phone-application-header')));
     await f.capture(t, 'normal');
 
     // One ordinary local edit, by touch.
@@ -131,17 +129,15 @@ void main() {
     expect(announced, contains('Synchronization Pending'));
     expect(announced, contains('Last successful sync 2026-11-15 11:59 UTC'));
     expect(announced, isNot(contains('Synced')));
-    // The only thing above the collection that the edit added is its own
-    // completion Undo bar; sync status took no room. Measure the collection
-    // boundary: its internal header may dock Add when Undo reduces the space
-    // available on a short phone.
+    // Sync stays compact and Undo sits at the bottom. Neither shifts the
+    // collection header or its first row down after a completion.
     expect(
-      t.getRect(find.byKey(const Key('desktop-application-header'))),
+      t.getRect(find.byKey(const Key('phone-application-header'))),
       header,
     );
     expect(
       t.getTopLeft(collection).dy - collectionTop.dy,
-      t.getSize(find.byKey(const Key('task-completion-undo'))).height,
+      0,
       reason: 'Sync status takes no extra space above the collection',
     );
     await f.capture(t, 'pending');
@@ -200,12 +196,12 @@ void main() {
       isNot(contains('Synced')),
     );
     expect(
-      t.getRect(find.byKey(const Key('desktop-application-header'))),
+      t.getRect(find.byKey(const Key('phone-application-header'))),
       header,
     );
     expect(
       t.getTopLeft(collection).dy - collectionTop.dy,
-      t.getSize(find.byKey(const Key('task-completion-undo'))).height,
+      0,
       reason: 'Sync verification takes no extra space above the collection',
     );
     await f.capture(t, 'verifying');

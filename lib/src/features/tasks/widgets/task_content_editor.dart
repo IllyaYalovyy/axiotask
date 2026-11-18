@@ -28,11 +28,13 @@ final class TaskContentEditor extends StatefulWidget {
     required this.viewModel,
     required this.task,
     required this.builder,
+    this.touchLayout = false,
     super.key,
   });
 
   final TaskDetailViewModel viewModel;
   final CachedTask task;
+  final bool touchLayout;
   final Widget Function(BuildContext context, TaskContentFields fields) builder;
 
   @override
@@ -168,6 +170,10 @@ final class _TaskContentEditorState extends State<TaskContentEditor> {
               ?.copyWith(fontWeight: FontWeight.w700),
           decoration: InputDecoration(
             hintText: 'Task title',
+            border: widget.touchLayout ? InputBorder.none : null,
+            contentPadding: widget.touchLayout
+                ? const EdgeInsets.symmetric(vertical: 12)
+                : null,
             isDense: true,
             counterText: '',
             errorText: rejected
@@ -198,16 +204,27 @@ final class _TaskContentEditorState extends State<TaskContentEditor> {
               controller: _notes,
               focusNode: _notesFocus,
               maxLength: 8192,
-              minLines: 3,
-              maxLines: 12,
+              minLines: widget.touchLayout ? 1 : 3,
+              maxLines: widget.touchLayout ? null : 12,
               keyboardType: TextInputType.multiline,
               textCapitalization: TextCapitalization.sentences,
               decoration: InputDecoration(
                 hintText: 'Add notes',
-                border: const OutlineInputBorder(),
+                border: widget.touchLayout
+                    ? InputBorder.none
+                    : const OutlineInputBorder(),
+                contentPadding: widget.touchLayout
+                    ? const EdgeInsets.symmetric(vertical: 12)
+                    : null,
                 counterText: '',
-                // Always present, so the layout does not jump while saving.
-                helperText: _statusLabel(draft?.status),
+                // Desktop keeps its guidance line. Phone details stay quiet
+                // when saved, but still identify pending/failed local edits.
+                helperText:
+                    widget.touchLayout &&
+                        (draft == null ||
+                            draft.status == TaskContentSaveStatus.saved)
+                    ? null
+                    : _statusLabel(draft?.status),
                 helperMaxLines: 2,
               ),
             ),

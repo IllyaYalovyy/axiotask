@@ -94,7 +94,7 @@ void main() {
       expect(t.takeException(), isNull, reason: '$viewport composer layout');
       for (final (control, label) in <(Finder, String)>[
         (_cancel, 'Cancel'),
-        (_submit, 'Add task'),
+        (_submit, 'Save'),
       ]) {
         final rect = t.getRect(control);
         expect(rect.top, greaterThanOrEqualTo(0), reason: '$viewport $label');
@@ -138,12 +138,14 @@ void main() {
     expect(first.taskListId, f.destination);
     expect(first.parentTaskId, isNull);
     await f.capture(t, 'after_first');
-    expect(_composer, findsOneWidget, reason: 'Open for the next capture');
+    expect(_composer, findsNothing, reason: 'Save returns to the collection');
+    await _lowerKeyboard(t);
+    await _openComposer(t);
     expect(_text(t, _title), isEmpty);
     expect(_text(t, _notes), isEmpty);
     expect(_focused(t, _title), isTrue, reason: 'Ready for the next title');
 
-    // Second consecutive capture after rotating to landscape at 2x text.
+    // A fresh capture after rotating to landscape at 2x text.
     await usePhoneViewport(
       t,
       const PhoneViewport(360, PhoneOrientation.landscape, 2),
