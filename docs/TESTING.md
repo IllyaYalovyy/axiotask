@@ -1107,6 +1107,38 @@ and `test/features/tasks/view_export_test.dart` (list, smart view, completed
 filter, empty view, single-flight, snapshot timing, disposal, phone menu and
 feedback). Exports are human-readable snapshots, separate from the account
 backup, which they never read or change.
+The tracked findings `bottom-navigation` and `task-row-metadata` (v1.5.3's
+bottom smart-view navigation and readable task-row metadata, seen only in the
+audit's screenshots) are corrected by
+`integration_test/android_regression/home_navigation_test.dart`. They stay
+tracked findings with an expected pass in the `complete` subset, never audit
+cases or failures among the original 19. `bottom-navigation` taps each of
+Focus, Upcoming, Missed, Unscheduled and All by touch and requires the
+collection to hold exactly that view's stored top-level tasks, the tapped
+destination alone selected in semantics, and each destination's announced
+count to match. A list chosen from the drawer must leave every destination
+unselected, Back from details must return to the view it left, and at 320,
+360 and 443 widths (portrait at 1x and 2x, landscape at 1x) every destination
+must keep a measured 48 dp hit region inside the screen, above the gesture
+area, apart from its neighbours and from the add button, which in turn must
+not cover the first row; docked at 1x text, it must leave Select and the
+collection actions whole inside the header. A 443 landscape phone at 2x text, where the bar
+yields, must reach the smart views from the drawer. SQLite must hold every
+task unchanged with no publication intent. `task-row-metadata` reads the
+seeded rows' metadata as announced phrases and visible text (own and earlier
+subtask dates, notes, progress, "no date", the list in smart views, overdue
+and today colours, no raw ISO dates), completes the subtask by touch and
+requires the parent row to follow what SQLite stored, lays out at every
+selection viewport without overflow, and captures All in light and dark
+themes for comparison with the v1.5.3 screenshot. Host coverage:
+`test/domain/task_row_metadata_test.dart` (relative wording across month,
+year and leap boundaries, subtask-date and list rules) and
+`test/features/tasks/phone_home_navigation_test.dart` (destinations, counts,
+filtering, drawer, details Back, selection, composer and keyboard, a docked
+add button that joins the commands at 360 landscape and never squeezes the
+title in a 320 x 420 window, 12
+viewports, desktop and wide Android without the bar, and the
+`phone_home_navigation_{light,dark}` goldens).
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

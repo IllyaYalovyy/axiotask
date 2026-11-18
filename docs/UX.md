@@ -99,12 +99,38 @@ the capture reports that Google confirmation is pending and returns keyboard
 focus to the title field. `Ctrl+N` and `Ctrl+Shift+V` remain discoverable
 accelerators for the visible capture and paste routes.
 
-Phones (Android touch layouts narrower than the desktop workspace) restore the
-v1.5.3 creation affordance instead of an always-visible bar. A floating New
+Phones (Android touch layouts narrower than the desktop workspace) restore
+v1.5.3's bottom smart-view navigation. A bar under the collection offers Focus,
+Upcoming, Missed, Unscheduled and All with equal-width 48 dp-plus touch targets;
+the shown view is active (in pixels and semantics), a list opened from the
+drawer leaves every destination inactive, and each destination announces its
+view count, the same count the drawer shows. The bar pads itself past the
+system gesture area, clamps label text scaling to 1.3 (labels scale down rather
+than overflow at 320 dp), and is 56 dp with labels beside the icons on short
+(landscape) layouts. It yields over details, search and the drawer, during
+selection and capture, while a keyboard is up, and where it would leave the
+collection less than three touch rows (scaled with text, for example a phone in
+landscape at large text); the drawer's smart views and lists remain, and the
+drawer button now shows at every width without the desktop navigation pane.
+Back from details returns to the view that was active. Phone task rows show
+v1.5.3's readable metadata beneath the title: a notes mark, the due date in
+relative words ("2d overdue", "today", "in 3d", then "Dec 3") coloured by
+urgency, an earlier open subtask's date ("↳ tomorrow"), "no date" when undated,
+subtask progress ("1/2" with a bar) and, in a smart view, the task's list. The
+items wrap rather than overflow, and assistive technology hears one phrase
+("Has notes, Due 2 days ago, 1 of 2 subtasks complete, In Inbox"). The shared
+`projectTaskRowMetadata` policy derives all of it from cached tasks; desktop
+rows keep their dense subtitle.
+
+Phones also restore the v1.5.3 creation affordance instead of an
+always-visible bar. A floating New
 task button sits at the collection's bottom-right; the task list keeps room to
 scroll its last row clear of it, and where a phone in landscape at large text
-leaves too little height for a row above it, the same button docks beside the
-collection title so it never covers a row's controls. It leaves while the
+leaves too little height for the tallest visible row (measured, since phone
+rows wrap their metadata) above it, the same button docks in the collection
+header so it never covers a row's controls: after the commands when the title
+keeps its minimum width beside both, otherwise beside the title with the
+commands beneath. It leaves while the
 composer is open, a keyboard is up or selection mode is active. Tapping it
 opens a composer pinned at the top of the collection with focus in the title.
 Cancel and Add sit on the title row, which never scrolls; optional multiline

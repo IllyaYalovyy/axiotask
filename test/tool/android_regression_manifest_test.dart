@@ -65,6 +65,14 @@ const _correctedAuditFailures = <String, String>{
   '33_parent_completion_cascade': 'android-completion-semantics',
 };
 
+/// Screenshot-backed findings beyond the 36 audit cases whose corrective
+/// task landed a passing native contract, with the owning task. They are
+/// not audit failures and never enter the baseline.
+const _correctedFindings = <String, String>{
+  'bottom-navigation': 'android-home-navigation',
+  'task-row-metadata': 'android-home-navigation',
+};
+
 const _auditPassingNumbers = <String>{
   '04', '07', '10', '12', '13', '16', '19', '21', '24', //
   '25', '26', '27', '28', '29', '30', '31', '36',
@@ -146,7 +154,7 @@ void main() {
     }
   });
 
-  test('tracks the four non-case findings as outstanding', () {
+  test('tracks the four non-case findings outside the audit cases', () {
     final findings = manifest.entries.where(
       (entry) => entry.kind == EntryKind.trackedFinding,
     );
@@ -157,8 +165,29 @@ void main() {
       'subtask-touch-reorder',
     ]);
     for (final entry in findings) {
-      expect(entry.contract, ContractState.outstanding, reason: entry.id);
       expect(entry.subsets, {'complete'}, reason: entry.id);
+      if (_correctedFindings.containsKey(entry.id)) continue;
+      expect(entry.expected, ExpectedOutcome.fail, reason: entry.id);
+      expect(entry.contract, ContractState.outstanding, reason: entry.id);
+    }
+  });
+
+  test('corrected findings carry an executable passing contract', () {
+    for (final MapEntry(key: id, value: owner) in _correctedFindings.entries) {
+      final entry = manifest.entries.singleWhere(
+        (candidate) => candidate.id == id,
+      );
+      expect(entry.kind, EntryKind.trackedFinding, reason: id);
+      expect(entry.expected, ExpectedOutcome.pass, reason: id);
+      expect(entry.label, CaseLabel.working, reason: id);
+      expect(entry.contract, ContractState.implemented, reason: id);
+      expect(entry.owner, owner, reason: id);
+      final source = File(entry.testPath).readAsStringSync();
+      expect(
+        source,
+        contains(RegExp("regressionCase\\(\\s*'${RegExp.escape(id)}'")),
+        reason: id,
+      );
     }
   });
 

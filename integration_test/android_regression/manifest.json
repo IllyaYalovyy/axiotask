@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 11,
+  "manifest_version": 12,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -619,9 +619,10 @@
       "finding": "Bottom smart-view navigation present in v1.5.3 is absent on phones.",
       "owner": "android-home-navigation",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/home_navigation_test.dart",
       "subsets": [
         "complete"
@@ -632,9 +633,10 @@
       "finding": "Task-row metadata (due date, list, subtask and notes indicators) shown by v1.5.3 is absent on phones.",
       "owner": "android-home-navigation",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/home_navigation_test.dart",
       "subsets": [
         "complete"

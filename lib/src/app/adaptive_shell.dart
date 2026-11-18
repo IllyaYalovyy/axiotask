@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -15,6 +16,7 @@ import '../domain/model/tasks.dart';
 import '../domain/policy/date_workflow.dart';
 import '../domain/policy/smart_views.dart';
 import '../domain/policy/subtask_progress.dart';
+import '../domain/policy/task_row_metadata.dart';
 import '../domain/repository/preferences_repository.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../features/search/search_overlay.dart';
@@ -25,8 +27,10 @@ import '../features/tasks/task_detail_view_model.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../features/tasks/widgets/bulk_add.dart';
 import '../features/tasks/widgets/quick_add.dart';
+import '../features/tasks/widgets/smart_view_bar.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
 import '../features/tasks/widgets/task_details.dart';
+import '../features/tasks/widgets/task_row_metadata.dart';
 import '../features/tasks/widgets/task_swipe.dart';
 import '../sync/health/sync_health.dart';
 import 'desktop_shortcuts.dart';
@@ -352,14 +356,21 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
     _openComposer();
   }
 
+  /// The route that owns the visible surface; dialogs, selection and the
+  /// composer layer over it. The collection is the root, so it is the
+  /// surface whenever no other surface route is open.
+  AppRoute get _visibleSurfaceRoute =>
+      _navigation.state.routes.reversed.firstWhere(
+        (route) =>
+            route is SearchRoute ||
+            route is TaskDetailRoute ||
+            route is DrawerRoute ||
+            route is CollectionRoute,
+      );
+
   bool get _collectionVisible =>
       widget.viewModel.state.selectedTaskId == null &&
-      !_navigation.state.routes.any(
-        (route) =>
-            route is TaskDetailRoute ||
-            route is SearchRoute ||
-            route is DrawerRoute,
-      );
+      _visibleSurfaceRoute is CollectionRoute;
 
   void _openComposer() {
     if (!_navigation.state.composerOpen) _navigation.openComposer();
@@ -678,6 +689,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
         onKeyEvent: _handleDesktopKeyEvent,
         child: Scaffold(
           body: SafeArea(
+            // The phone's smart-view bar pads itself past the gesture area,
+            // so the bottom inset is applied below the content instead.
+            bottom: !_phoneComposerMode,
             child: AnimatedBuilder(
               animation: widget.viewModel,
               builder: (context, _) {
@@ -799,68 +813,64 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                           ],
                         ),
                       Expanded(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            final wide = constraints.maxWidth >= 1024;
-                            final pages = <Page<Object?>>[
-                              _surfacePage(const CollectionRoute()),
-                              for (final route in _navigation.state.routes.skip(
-                                1,
-                              ))
-                                _surfacePage(route),
-                            ];
-                            final visibleRoute = _navigation
-                                .state
-                                .routes
-                                .reversed
-                                .firstWhere(
-                                  (route) =>
-                                      route is SearchRoute ||
-                                      route is TaskDetailRoute ||
-                                      route is DrawerRoute ||
-                                      route is CollectionRoute,
-                                );
-                            final visible = switch (visibleRoute) {
-                              SearchRoute() => SearchOverlay(
-                                viewModel: _search,
-                                onOpenResult: _openSearchResult,
-                                onClose: _handleBack,
-                              ),
-                              DrawerRoute() => _ListNavigation(
-                                state: state,
-                                viewModel: widget.viewModel,
-                                onSelected: _handleBack,
-                              ),
-                              CollectionRoute() ||
-                              TaskDetailRoute() => _shellBody(
-                                state,
-                                wide,
-                                keyboardVisible: keyboardVisible,
-                              ),
-                              _ => throw StateError('unsupported_visual_route'),
-                            };
-                            return NavigatorPopHandler<Object?>(
-                              onPopWithResult: (_) =>
-                                  _surfaceNavigatorKey.currentState?.maybePop(),
-                              child: Stack(
-                                fit: StackFit.expand,
-                                children: <Widget>[
-                                  visible,
-                                  Offstage(
-                                    offstage: true,
-                                    child: ExcludeFocus(
-                                      child: Navigator(
-                                        key: _surfaceNavigatorKey,
-                                        requestFocus: false,
-                                        pages: pages,
-                                        onDidRemovePage: _pageRemoved,
+                        child: _withPhoneSmartViewBar(
+                          context,
+                          state,
+                          keyboardVisible: keyboardVisible,
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final wide = constraints.maxWidth >= 1024;
+                              final pages = <Page<Object?>>[
+                                _surfacePage(const CollectionRoute()),
+                                for (final route
+                                    in _navigation.state.routes.skip(1))
+                                  _surfacePage(route),
+                              ];
+                              final visible = switch (_visibleSurfaceRoute) {
+                                SearchRoute() => SearchOverlay(
+                                  viewModel: _search,
+                                  onOpenResult: _openSearchResult,
+                                  onClose: _handleBack,
+                                ),
+                                DrawerRoute() => _ListNavigation(
+                                  state: state,
+                                  viewModel: widget.viewModel,
+                                  onSelected: _handleBack,
+                                ),
+                                CollectionRoute() ||
+                                TaskDetailRoute() => _shellBody(
+                                  state,
+                                  wide,
+                                  keyboardVisible: keyboardVisible,
+                                ),
+                                _ => throw StateError(
+                                  'unsupported_visual_route',
+                                ),
+                              };
+                              return NavigatorPopHandler<Object?>(
+                                onPopWithResult: (_) => _surfaceNavigatorKey
+                                    .currentState
+                                    ?.maybePop(),
+                                child: Stack(
+                                  fit: StackFit.expand,
+                                  children: <Widget>[
+                                    visible,
+                                    Offstage(
+                                      offstage: true,
+                                      child: ExcludeFocus(
+                                        child: Navigator(
+                                          key: _surfaceNavigatorKey,
+                                          requestFocus: false,
+                                          pages: pages,
+                                          onDidRemovePage: _pageRemoved,
+                                        ),
                                       ),
                                     ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          },
+                                  ],
+                                ),
+                              );
+                            },
+                          ),
                         ),
                       ),
                     ],
@@ -871,6 +881,89 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
           ),
         ),
       ),
+    );
+  }
+
+  /// Places [child] above the phone collection's bottom smart-view
+  /// navigation, or above the bottom safe-area inset while the bar yields:
+  /// over details, search and the drawer, during selection or capture,
+  /// while the keyboard is raised, and when the bar would leave the
+  /// collection less than [_minimumCollectionHeight] (a phone in landscape
+  /// at large text), where the drawer's smart views remain.
+  Widget _withPhoneSmartViewBar(
+    BuildContext context,
+    TasksViewState state, {
+    required bool keyboardVisible,
+    required Widget child,
+  }) {
+    final bar = _phoneComposerMode
+        ? _phoneSmartViewBar(state, keyboardVisible: keyboardVisible)
+        : null;
+    // Zero outside phone mode, where the safe area already applied it.
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    final minimumCollection =
+        _minimumCollectionHeight * textScale.clamp(1.0, 2.0);
+    final barHeight =
+        (SmartViewNavigationBar.isCompact(context)
+            ? SmartViewNavigationBar.compactHeight
+            : SmartViewNavigationBar.height) +
+        bottomInset;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showBar =
+            bar != null &&
+            constraints.maxHeight - barHeight >= minimumCollection;
+        // One structure whether or not the bar shows, so showing or hiding
+        // it never remounts the content. The padding (unlike a fixed-height
+        // spacer) yields gracefully to a transiently shorter layout.
+        return Padding(
+          padding: EdgeInsets.only(bottom: showBar ? 0 : bottomInset),
+          child: Column(
+            children: <Widget>[
+              Expanded(
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeBottom: true,
+                  child: child,
+                ),
+              ),
+              if (showBar) bar,
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Room the phone collection keeps beside the smart-view bar at 1x text:
+  /// its header and at least two touch-sized rows.
+  static const double _minimumCollectionHeight = 3 * kMinInteractiveDimension;
+
+  /// The smart-view bar for the current state, or null where it yields.
+  SmartViewNavigationBar? _phoneSmartViewBar(
+    TasksViewState state, {
+    required bool keyboardVisible,
+  }) {
+    final visible =
+        _collectionVisible &&
+        !state.isBulkSelectionActive &&
+        !_navigation.state.composerOpen &&
+        !keyboardVisible &&
+        !state.isLoading &&
+        state.failureMessage == null;
+    if (!visible) return null;
+    return SmartViewNavigationBar(
+      // Before any choice the collection shows Focus, so Focus is active.
+      selected: switch (state.selectedView) {
+        SmartTaskView(:final smartView) => smartView,
+        TaskListView() => null,
+      },
+      counts: <SmartView, int>{
+        for (final view in SmartView.values)
+          view: state.viewCount(SmartTaskView(view)),
+      },
+      onSelected: widget.viewModel.selectSmartView,
     );
   }
 
@@ -992,7 +1085,9 @@ final class _ApplicationHeader extends StatelessWidget {
               child: Row(
                 children: <Widget>[
                   const Spacer(),
-                  if (width < 900)
+                  // Below the 1024 workspace breakpoint there is no
+                  // navigation pane, so the drawer is the way to the lists.
+                  if (width < 1024)
                     _HeaderFocusOrder(
                       order: 1,
                       child: IconButton(
@@ -1526,9 +1621,12 @@ final class _PhoneCapture {
   /// Margin of the floating add button from the collection's edges.
   static const double buttonMargin = 16;
 
+  /// Side of the add button.
+  static const double buttonSize = 56;
+
   /// Bottom room the task list keeps so its last row is never under the
-  /// 56 dp add button.
-  static const double buttonClearance = 56 + buttonMargin * 2;
+  /// add button.
+  static const double buttonClearance = buttonSize + buttonMargin * 2;
 
   final bool composerOpen;
   final bool keyboardVisible;
@@ -2449,7 +2547,7 @@ final class _ListNavigation extends StatelessWidget {
               ListTile(
                 dense: true,
                 selected: state.selectedSmartView == smartView,
-                leading: Icon(_smartViewIcon(smartView)),
+                leading: Icon(smartViewIcon(smartView)),
                 title: Text(smartView.title),
                 trailing: _CountBadge(
                   count: state.viewCount(SmartTaskView(smartView)),
@@ -2581,14 +2679,6 @@ final class _DesktopTaskListDropTarget extends StatelessWidget {
   }
 }
 
-IconData _smartViewIcon(SmartView view) => switch (view) {
-  SmartView.focus => Icons.center_focus_strong_outlined,
-  SmartView.upcoming => Icons.calendar_month_outlined,
-  SmartView.missed => Icons.history_outlined,
-  SmartView.unscheduled => Icons.event_busy_outlined,
-  SmartView.all => Icons.all_inbox_outlined,
-};
-
 final class _CountBadge extends StatelessWidget {
   const _CountBadge({required this.count});
 
@@ -2712,6 +2802,43 @@ final class _TaskCollectionState extends State<_TaskCollection> {
   FocusNode get quickAddFocus => widget.quickAddFocus;
   VoidCallback get openBulkAdd => widget.openBulkAdd;
 
+  /// Laid-out heights of the phone rows currently built, by task.
+  final Map<TaskId, double> _rowHeights = <TaskId, double>{};
+
+  /// The tallest of [_rowHeights], as of the last completed frame.
+  double _tallestRow = 0;
+  bool _rowHeightUpdateScheduled = false;
+
+  void _rowHeightChanged(TaskId taskId, double? height) {
+    if (height == null) {
+      _rowHeights.remove(taskId);
+    } else {
+      _rowHeights[taskId] = height;
+    }
+    if (_rowHeightUpdateScheduled) return;
+    _rowHeightUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rowHeightUpdateScheduled = false;
+      if (!mounted) return;
+      final tallest = _rowHeights.values.fold<double>(0, math.max);
+      if ((tallest - _tallestRow).abs() > 0.5) {
+        setState(() => _tallestRow = tallest);
+      }
+    });
+  }
+
+  /// Laid-out width of the collection commands, as of the last frame; zero
+  /// before they are first laid out.
+  double _commandsWidth = 0;
+
+  void _commandsWidthChanged(double width) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && (width - _commandsWidth).abs() > 0.5) {
+        setState(() => _commandsWidth = width);
+      }
+    });
+  }
+
   void _ensureFocusNodes(int count) {
     while (_rowFocusNodes.length < count) {
       _rowFocusNodes.add(
@@ -2781,6 +2908,12 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     _ensureFocusNodes(tasks.length);
     final narrow = MediaQuery.textScalerOf(context).scale(14) / 14 > 1.4;
     final phoneCapture = widget.phoneCapture;
+    // Phone rows show readable metadata; a smart view names each row's list.
+    final listTitles = phoneCapture == null
+        ? const <TaskListId, String>{}
+        : <TaskListId, String>{
+            for (final list in state.taskLists) list.id: list.title,
+          };
     // The add button leaves while it would obstruct: an open composer, a
     // raised keyboard or selection mode.
     final showAddButton =
@@ -2793,9 +2926,15 @@ final class _TaskCollectionState extends State<_TaskCollection> {
     // it; on shorter layouts (a phone in landscape at large text) it docks in
     // the header instead, so it never hides a row's controls.
     final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    // Phone rows carry a wrapping metadata line, so the tallest laid-out
+    // row decides, not the row's minimum height.
     bool floatsAddButton(double collectionHeight) =>
         collectionHeight / 2 - 1 >=
-        _PhoneCapture.buttonClearance + rowMetrics.minimumHeight * textScale;
+        _PhoneCapture.buttonClearance +
+            math.max(
+              rowMetrics.minimumHeight * textScale,
+              phoneCapture == null ? 0.0 : _tallestRow,
+            );
     Widget addButton({required bool docked}) => FloatingActionButton(
       key: const Key('phone-add-task'),
       heroTag: null,
@@ -2816,77 +2955,102 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                 _BulkActionBar.labeledWidth(context, state) +
                     8 +
                     _minimumHeaderTitleWidth);
-    Widget header({required bool selectionPinned, required bool dockAdd}) =>
-        Padding(
-          key: const Key('collection-header'),
-          padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
-          child: Builder(
-            builder: (context) {
-              final titleText = Text(
-                state.selectedViewTitle,
-                maxLines: narrow ? 2 : 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleLarge
-                    ?.copyWith(fontWeight: FontWeight.w700),
-              );
-              final commands = state.isBulkSelectionActive
-                  ? _BulkActionBar(state: state, viewModel: viewModel)
-                  : _NormalCollectionCommandBar(
-                      state: state,
-                      viewModel: viewModel,
-                      tasks: tasks,
-                      clearCompletedCount: clearCompletedCount,
-                      openBulkAdd: openBulkAdd,
-                    );
-              // Docked, the add button leads the header beside the title, so
-              // the header's own scrolling never clips it.
-              final Widget title = dockAdd
-                  ? Row(
-                      children: <Widget>[
-                        Expanded(child: titleText),
-                        const SizedBox(width: 8),
-                        addButton(docked: true),
-                      ],
-                    )
-                  : titleText;
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  if (selectionPinned)
-                    title
-                  else if (narrow) ...<Widget>[
-                    title,
-                    const SizedBox(height: 4),
-                    Align(alignment: Alignment.centerLeft, child: commands),
-                  ] else
-                    Row(
-                      children: <Widget>[
-                        Expanded(child: title),
-                        const SizedBox(width: 8),
-                        commands,
-                      ],
-                    ),
-                  if (phoneCapture == null) ...<Widget>[
-                    const SizedBox(height: 2),
-                    QuickAddBar(
-                      viewModel: quickAdd,
-                      lists: state.orderedTaskLists,
-                      focusNode: quickAddFocus,
-                      onPasteMultiple: openBulkAdd,
-                    ),
-                  ],
-                  const SizedBox(height: 4),
-                  Text(
-                    _collectionCountLabel(state.health, tasks.length),
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
+    // A docked add button sits after the commands when the title keeps its
+    // minimum width beside both; otherwise it shares the title's own row.
+    bool docksBesideCommands(double headerWidth) =>
+        !narrow &&
+        _commandsWidth > 0 &&
+        headerWidth >=
+            _minimumHeaderTitleWidth +
+                8 +
+                _commandsWidth +
+                8 +
+                _PhoneCapture.buttonSize;
+    Widget header({
+      required bool selectionPinned,
+      required bool dockAdd,
+      required double headerWidth,
+    }) => Padding(
+      key: const Key('collection-header'),
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Builder(
+        builder: (context) {
+          final titleText = Text(
+            state.selectedViewTitle,
+            maxLines: narrow ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleLarge
+                ?.copyWith(fontWeight: FontWeight.w700),
+          );
+          final commands = _WidthReporter(
+            onWidth: _commandsWidthChanged,
+            child: state.isBulkSelectionActive
+                ? _BulkActionBar(state: state, viewModel: viewModel)
+                : _NormalCollectionCommandBar(
+                    state: state,
+                    viewModel: viewModel,
+                    tasks: tasks,
+                    clearCompletedCount: clearCompletedCount,
+                    openBulkAdd: openBulkAdd,
                   ),
-                ],
-              );
-            },
-          ),
-        );
+          );
+          final besideCommands =
+              dockAdd && !selectionPinned && docksBesideCommands(headerWidth);
+          // Docked, the add button leads the header beside the title, so
+          // the header's own scrolling never clips it.
+          final Widget title = dockAdd && !besideCommands
+              ? Row(
+                  children: <Widget>[
+                    Expanded(child: titleText),
+                    const SizedBox(width: 8),
+                    addButton(docked: true),
+                  ],
+                )
+              : titleText;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              if (selectionPinned)
+                title
+              // Docked, the button shares the title's row, so the
+              // commands move beneath them rather than squeeze it.
+              else if (narrow || (dockAdd && !besideCommands)) ...<Widget>[
+                title,
+                const SizedBox(height: 4),
+                Align(alignment: Alignment.centerLeft, child: commands),
+              ] else
+                Row(
+                  children: <Widget>[
+                    Expanded(child: title),
+                    const SizedBox(width: 8),
+                    commands,
+                    if (besideCommands) ...<Widget>[
+                      const SizedBox(width: 8),
+                      addButton(docked: true),
+                    ],
+                  ],
+                ),
+              if (phoneCapture == null) ...<Widget>[
+                const SizedBox(height: 2),
+                QuickAddBar(
+                  viewModel: quickAdd,
+                  lists: state.orderedTaskLists,
+                  focusNode: quickAddFocus,
+                  onPasteMultiple: openBulkAdd,
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                _collectionCountLabel(state.health, tasks.length),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
     // On short viewports (phone landscape, large text) the header scrolls
     // within what the top half of the height leaves, so task rows and their
     // controls always keep room to be seen and tapped.
@@ -2930,6 +3094,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                 child: header(
                   selectionPinned: selectionPinned,
                   dockAdd: dockAdd,
+                  headerWidth: constraints.maxWidth - 32,
                 ),
               ),
             ),
@@ -2972,7 +3137,7 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                           parentTaskId: task.id,
                           tasks: state.tasks,
                         );
-                        return _DesktopTaskRow(
+                        final taskRow = _DesktopTaskRow(
                           key: Key('desktop-task-row-${task.id.value}'),
                           focusNode: _rowFocusNodes[index],
                           onFocused: () => widget.onTaskFocused(task.id),
@@ -3025,12 +3190,28 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                             ),
                           ),
                           selected: task.id == state.selectedTaskId,
+                          metadata: phoneCapture == null
+                              ? null
+                              : projectTaskRowMetadata(
+                                  task: task,
+                                  effectiveDue: row.effectiveDue,
+                                  tasks: state.tasks,
+                                  view: projection.view,
+                                  listTitles: listTitles,
+                                  today: state.today,
+                                ),
                           subtitle: <String>[
                             if (task.due != null) 'Due ${task.due}',
                             if (row.effectiveDue.fromChildren != null)
                               'From subtasks ${row.effectiveDue.fromChildren}',
                             if (progress.total > 0) progress.label,
                           ].join(' • '),
+                        );
+                        if (phoneCapture == null) return taskRow;
+                        return _MeasuredRow(
+                          taskId: task.id,
+                          onHeight: _rowHeightChanged,
+                          child: taskRow,
                         );
                       },
                     ),
@@ -3078,6 +3259,7 @@ final class _DesktopTaskRow extends StatefulWidget {
     required this.task,
     required this.canMove,
     required this.subtitle,
+    this.metadata,
     required this.enabled,
     required this.selectionMode,
     required this.bulkSelected,
@@ -3105,6 +3287,9 @@ final class _DesktopTaskRow extends StatefulWidget {
   final CachedTask task;
   final bool canMove;
   final String subtitle;
+
+  /// The phone composition's metadata line, shown instead of [subtitle].
+  final TaskRowMetadata? metadata;
   final bool enabled;
   final bool selectionMode;
   final bool bulkSelected;
@@ -3368,11 +3553,19 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
                         children: <Widget>[
                           Text(
                             task.title,
-                            maxLines: 1,
+                            maxLines: widget.metadata == null ? 1 : 2,
                             overflow: TextOverflow.ellipsis,
                             style: titleStyle,
                           ),
-                          if (widget.subtitle.isNotEmpty)
+                          if (widget.metadata case final metadata?)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 2),
+                              child: TaskRowMetadataLine(
+                                metadata: metadata,
+                                completed: completed,
+                              ),
+                            )
+                          else if (widget.subtitle.isNotEmpty)
                             Text(
                               widget.subtitle,
                               maxLines: 1,
@@ -3949,4 +4142,101 @@ final class _CreateTaskDialogState extends State<_CreateTaskDialog> {
       ],
     ),
   );
+}
+
+/// Reports its child's laid-out height for [taskId], and null once the row
+/// leaves the tree, so the phone collection can keep the add button clear
+/// of whole rows.
+final class _MeasuredRow extends SingleChildRenderObjectWidget {
+  const _MeasuredRow({
+    required this.taskId,
+    required this.onHeight,
+    required super.child,
+  });
+
+  final TaskId taskId;
+  final void Function(TaskId taskId, double? height) onHeight;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderMeasuredRow(taskId, onHeight);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderMeasuredRow renderObject,
+  ) {
+    if (renderObject.taskId != taskId) {
+      renderObject
+        ..onHeight(renderObject.taskId, null)
+        ..taskId = taskId
+        ..resetReport();
+    }
+    renderObject.onHeight = onHeight;
+  }
+}
+
+final class _RenderMeasuredRow extends RenderProxyBox {
+  _RenderMeasuredRow(this.taskId, this.onHeight);
+
+  TaskId taskId;
+  void Function(TaskId taskId, double? height) onHeight;
+  double? _reported;
+
+  /// Reports again at the next layout, for a new [taskId].
+  void resetReport() {
+    _reported = null;
+    markNeedsLayout();
+  }
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (_reported != size.height) {
+      _reported = size.height;
+      onHeight(taskId, size.height);
+    }
+  }
+
+  @override
+  void detach() {
+    if (_reported != null) {
+      _reported = null;
+      onHeight(taskId, null);
+    }
+    super.detach();
+  }
+}
+
+/// Reports its child's laid-out width whenever it changes.
+final class _WidthReporter extends SingleChildRenderObjectWidget {
+  const _WidthReporter({required this.onWidth, required super.child});
+
+  final ValueChanged<double> onWidth;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderWidthReporter(onWidth);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderWidthReporter renderObject,
+  ) => renderObject.onWidth = onWidth;
+}
+
+final class _RenderWidthReporter extends RenderProxyBox {
+  _RenderWidthReporter(this.onWidth);
+
+  ValueChanged<double> onWidth;
+  double? _reported;
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (_reported != size.width) {
+      _reported = size.width;
+      onWidth(size.width);
+    }
+  }
 }

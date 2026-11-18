@@ -37,6 +37,7 @@
 // locally whose completion Google has not yet reported.
 
 import '../model/tasks.dart';
+import '../policy/task_date_format.dart';
 
 /// The two shapes an export can take, with the file and MIME identity each
 /// needs to leave the app.
@@ -208,7 +209,9 @@ void _markdownItem(
 ) {
   final box = task.status == TaskStatus.completed ? '[x]' : '[ ]';
   final due = task.due;
-  final dueLabel = due == null ? '' : ' — ${_absoluteDate(due, today)}';
+  final dueLabel = due == null
+      ? ''
+      : ' — ${formatAbsoluteTaskDate(due, today)}';
   out.writeln(
     '$indent- $box ${escapeMarkdownText(_oneLine(task.title))}$dueLabel',
   );
@@ -220,26 +223,6 @@ void _markdownItem(
     out.writeln(text.isEmpty ? '' : '$indent  ${_escapeMarkdownLine(text)}');
   }
   out.writeln();
-}
-
-const _months = <String>[
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
-String _absoluteDate(TaskDate date, TaskDate today) {
-  final label = '${_months[date.month - 1]} ${date.day}';
-  return date.year == today.year ? label : '$label, ${date.year}';
 }
 
 /// Collapses a value onto one line: a title carrying a line break would
