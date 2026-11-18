@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 12,
+  "manifest_version": 13,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -321,9 +321,10 @@
       "flow": "Ordinary pending edit feedback",
       "audit_classification": "Distracting UI",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/sync_status_test.dart",
       "owner": "android-sync-status-feedback",
       "subsets": [
@@ -336,8 +337,7 @@
       "audit_classification": "Limited pass",
       "baseline": {
         "expected": "pass",
-        "label": "limited-pass",
-        "limitation": "Covers only the absence of a native layout exception and a reachable failure message; the large red panel and generic message are tracked separately as failure-message-usability."
+        "label": "working"
       },
       "contract": "implemented",
       "test_path": "integration_test/android_regression/baseline_test.dart",
@@ -647,9 +647,10 @@
       "finding": "The generic failure state shows a large red panel reading 'Sync could not finish' without explaining what failed; case 19 passes only its narrow layout assertion.",
       "owner": "android-sync-status-feedback",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/sync_status_test.dart",
       "subsets": [
         "complete"

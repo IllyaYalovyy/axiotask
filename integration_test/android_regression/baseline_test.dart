@@ -8,6 +8,7 @@ import 'dart:io';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -136,21 +137,21 @@ void main() {
     expect((await f.task(f.second)).taskListId, f.list);
   });
 
-  regressionCase('19_failure_explanation', label: CaseLabel.limitedPass, (
-    t,
-    f,
-  ) async {
-    f.health.set(
-      SyncHealth(
-        outcome: SyncHealthOutcome.failed,
-        counts: const SyncWorkCounts(failed: 1),
-        lastSuccessfulSyncAt: regressionNow,
-        evaluatedAt: regressionNow,
-        failureReason: SyncFailureReason.applicationFailure,
-        diagnosticCode: 'regression.unspecified_failure',
-        action: SyncHealthAction.retry,
-      ),
+  // Beyond the audit's no-exception check, the failure must explain itself
+  // (here: an unknown cause, said plainly), stay bounded above the list, and
+  // offer a Retry that reaches the retry coordinator once and is followed by
+  // the state the coordinator reports.
+  regressionCase('19_failure_explanation', (t, f) async {
+    final failure = SyncHealth(
+      outcome: SyncHealthOutcome.failed,
+      counts: const SyncWorkCounts(failed: 1),
+      lastSuccessfulSyncAt: regressionNow,
+      evaluatedAt: regressionNow,
+      failureReason: SyncFailureReason.applicationFailure,
+      diagnosticCode: 'regression.unspecified_failure',
+      action: SyncHealthAction.retry,
     );
+    f.health.set(failure);
     await t.pumpAndSettle();
     await f.capture(t, 'failure_banner');
     expect(t.takeException(), isNull);
@@ -159,6 +160,65 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Audit parent').hitTestable(), findsOneWidget);
+
+    expect(
+      find.text('Failed · Sync could not finish. Cause unknown').hitTestable(),
+      findsOneWidget,
+      reason: 'An unknown failure says the cause is unknown',
+    );
+    expect(
+      find.text(
+        '1 change could not be sent. Retry, or open details for the '
+        'reference code.',
+      ),
+      findsOneWidget,
+    );
+    final screen = t.view.physicalSize / t.view.devicePixelRatio;
+    final banner = t.getRect(find.byKey(const Key('sync-health-banner')));
+    expect(
+      banner.height,
+      lessThanOrEqualTo(screen.height * 0.2),
+      reason: 'Failure feedback $banner must not displace the task list',
+    );
+    final retry = find.byKey(const Key('sync-health-action'));
+    expect(find.descendant(of: retry, matching: find.text('Retry')), findsOne);
+    final semantics = t.ensureSemantics();
+    final retryNode = t.getSemantics(retry).getSemanticsData();
+    expect(retryNode.flagsCollection.isButton, isTrue);
+    expect(retryNode.hasAction(SemanticsAction.tap), isTrue);
+    expect(retryNode.label, 'Retry');
+    semantics.dispose();
+
+    // Details carry the reference code and say the cause is unknown.
+    await t.tap(find.byKey(const Key('sync-health-details')));
+    await t.pumpAndSettle();
+    expect(find.text('Reference: regression.unspecified_failure'), findsOne);
+    expect(
+      find.textContaining('Axiotask could not identify the cause'),
+      findsOneWidget,
+    );
+    await t.tap(find.text('Close'));
+    await t.pumpAndSettle();
+
+    // Retry reaches the retry coordinator once; the banner follows it.
+    f.onSyncControl = (_) async => f.health.set(
+      SyncHealth(
+        outcome: SyncHealthOutcome.pending,
+        pendingReason: SyncPendingReason.retrying,
+        counts: const SyncWorkCounts(failed: 1),
+        lastSuccessfulSyncAt: regressionNow,
+        evaluatedAt: regressionNow,
+      ),
+    );
+    await t.tap(retry);
+    await t.pumpAndSettle();
+    expect(f.syncControls, <SyncControl>[SyncControl.retry]);
+    expect(
+      find.text('Pending · Retrying synchronization').hitTestable(),
+      findsOne,
+    );
+    expect(find.textContaining('Sync could not finish'), findsNothing);
+    expect(retry, findsNothing);
   });
 
   regressionCase('21_delete_and_undo', (t, f) async {

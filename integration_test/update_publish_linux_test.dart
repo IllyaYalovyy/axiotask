@@ -187,8 +187,11 @@ void main() {
         MaterialApp(home: AdaptiveShell(viewModel: viewModel)),
       );
       await tester.pumpAndSettle();
-      expect(find.text('Sync stopped'), findsWidgets);
-      expect(find.text('2 unresolved'), findsOneWidget);
+      expect(find.textContaining('Sync stopped'), findsWidgets);
+      expect(
+        find.textContaining('2 changes saved on this device'),
+        findsOneWidget,
+      );
       expect(find.text('Offline renamed list'), findsWidgets);
       // The offline edit completes the task. Completed tasks are hidden by the
       // default view preference, but the full desired record must already be

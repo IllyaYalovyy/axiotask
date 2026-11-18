@@ -27,7 +27,7 @@ void main() {
       find.bySemanticsLabel('Axiotask application controls'),
       findsOneWidget,
     );
-    expect(find.text('No authorization'), findsOneWidget);
+    expect(find.textContaining('No authorization'), findsOneWidget);
     expect(find.text('No cached tasks in this list'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

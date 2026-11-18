@@ -76,8 +76,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Renamed before restart'), findsWidgets);
-    expect(find.text('Sync stopped'), findsWidgets);
-    expect(find.text('1 unresolved'), findsOneWidget);
+    expect(find.textContaining('Sync stopped'), findsWidgets);
+    expect(
+      find.textContaining('1 change saved on this device'),
+      findsOneWidget,
+    );
     expect(
       (await DesiredStateDao(
         database,

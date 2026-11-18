@@ -74,7 +74,7 @@ void main() {
       await tester.pumpWidget(AxiotaskApp(viewModel: second.viewModel));
       await tester.pumpAndSettle();
       expect(find.text('Validated remote task'), findsOneWidget);
-      expect(find.text('Pending'), findsWidgets);
+      expect(find.textContaining('Pending'), findsWidgets);
       expect(find.text('Synced'), findsNothing);
 
       await second.start();
@@ -141,8 +141,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Validated remote task'), findsOneWidget);
-      expect(find.text('Failed'), findsWidgets);
-      expect(find.text('No connection'), findsOneWidget);
+      expect(find.textContaining('Failed'), findsWidgets);
+      expect(find.textContaining('No connection'), findsOneWidget);
       expect(find.textContaining('2026-01-01 12:00 UTC'), findsOneWidget);
     },
   );
@@ -164,7 +164,12 @@ void main() {
       await tester.pumpWidget(AxiotaskApp(viewModel: malformed.viewModel));
       await malformed.start();
       await tester.pumpAndSettle();
-      expect(find.text('Sync could not finish. Open details'), findsOneWidget);
+      expect(
+        find.textContaining(
+          'Google returned task data Axiotask could not read',
+        ),
+        findsOneWidget,
+      );
       expect(
         malformed.viewModel.state.health.diagnosticCode,
         'sync.malformed_live_task',
@@ -255,7 +260,7 @@ void main() {
 
       await tester.tap(find.byTooltip('Stop sync'));
       await tester.pumpAndSettle();
-      expect(find.text('Sync stopped'), findsOneWidget);
+      expect(find.textContaining('Sync stopped'), findsOneWidget);
       expect(
         firstComposition.authorization.currentState,
         isA<TasksAuthorized>(),
@@ -270,7 +275,10 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('Edited while sync is stopped'), findsOneWidget);
-      expect(find.text('1 unresolved'), findsOneWidget);
+      expect(
+        find.textContaining('1 change saved on this device'),
+        findsOneWidget,
+      );
       firstComposition.clock.advance(const Duration(minutes: 10));
       await first.coordinator!.refresh();
       expect(firstComposition.service.listCalls, 1);
@@ -290,8 +298,11 @@ void main() {
 
       expect(secondComposition.service.listCalls, 0);
       expect(find.text('Edited while sync is stopped'), findsOneWidget);
-      expect(find.text('Sync stopped'), findsOneWidget);
-      expect(find.text('1 unresolved'), findsOneWidget);
+      expect(find.textContaining('Sync stopped'), findsOneWidget);
+      expect(
+        find.textContaining('1 change saved on this device'),
+        findsOneWidget,
+      );
       final stoppedFacts = await SyncHealthDao(second.database)
           .watchFacts(second.viewModel.accountId)
           .first;
@@ -315,8 +326,21 @@ void main() {
             'health=${second.viewModel.state.health.reasonLabel}; '
             'code=${second.viewModel.state.health.diagnosticCode}',
       );
-      expect(find.text('Pending'), findsWidgets);
-      expect(find.text('1 unresolved'), findsOneWidget);
+      // The catch-up run follows a recent success, so the status is the
+      // compact Pending control: it shows the waiting change and announces
+      // that it is saved locally, never that it is synced.
+      final pendingStatus = find.byKey(const Key('sync-health-pending'));
+      expect(pendingStatus, findsOneWidget);
+      expect(find.byKey(const Key('sync-health-banner')), findsNothing);
+      expect(find.text('1 waiting for Google'), findsOneWidget);
+      expect(find.text('Synced'), findsNothing);
+      expect(
+        tester.getSemantics(pendingStatus).getSemanticsData().label,
+        allOf(
+          contains('Synchronization Pending'),
+          contains('1 change saved on this device, not yet on Google.'),
+        ),
+      );
 
       resumeRead.release();
       await second.coordinator!.whenIdle;

@@ -196,13 +196,128 @@ final class SyncHealth {
   final int retryAttemptCount;
   final bool automaticRetryExhausted;
 
-  /// Routine verification does not need to move the task list with a banner.
-  bool get usesCompactStatus =>
-      outcome == SyncHealthOutcome.good ||
-      (outcome == SyncHealthOutcome.pending &&
-          pendingReason == SyncPendingReason.verifying &&
-          lastSuccessfulSyncAt != null &&
-          counts.total == 0);
+  /// Routine work does not displace the task list with a banner.
+  ///
+  /// These stay a compact header status with details on demand: Good;
+  /// verification of an earlier success with no unresolved work; and
+  /// ordinary local edits behind a recent verified sync, both while queued
+  /// and while the routine run that publishes them verifies with Google.
+  /// Failed, uncertain, retrying, checking, stopped and unauthorized states,
+  /// and local work behind an old or absent success, stay expanded.
+  bool get usesCompactStatus {
+    if (outcome == SyncHealthOutcome.good) return true;
+    if (outcome != SyncHealthOutcome.pending) return false;
+    if (lastSuccessfulSyncAt == null) return false;
+    if (counts.failed > 0 || counts.uncertain > 0) return false;
+    return switch (pendingReason) {
+      SyncPendingReason.verifying => counts.total == 0 || hasRecentSuccess,
+      SyncPendingReason.localChanges => hasRecentSuccess,
+      _ => false,
+    };
+  }
+
+  /// The last verified success is inside the freshness window.
+  bool get hasRecentSuccess {
+    final success = lastSuccessfulSyncAt;
+    if (success == null) return false;
+    final age = evaluatedAt.toUtc().difference(success.toUtc());
+    return !age.isNegative && age < syncFreshnessWindow;
+  }
+
+  /// Short status for the compact header; never claims synchronization while
+  /// work remains.
+  String get compactLabel => switch ((outcome, pendingReason)) {
+    (SyncHealthOutcome.good, _) => 'Synced',
+    (_, SyncPendingReason.localChanges) => 'Saved on device',
+    _ => 'Checking Google',
+  };
+
+  /// Secondary compact text: the success age, or the unconfirmed work.
+  String get compactDetail {
+    final waiting = counts.pendingConfirmation;
+    if (outcome != SyncHealthOutcome.good && waiting > 0) {
+      return '$waiting waiting for Google';
+    }
+    final relative = lastSuccessRelativeLabel ?? 'verification required';
+    return outcome == SyncHealthOutcome.good ? relative : 'last sync $relative';
+  }
+
+  /// Whether the failure has a specific, known explanation. An application
+  /// failure without a recognized code says so instead of implying a cause.
+  bool get isCauseKnown =>
+      outcome != SyncHealthOutcome.failed ||
+      failureReason != SyncFailureReason.applicationFailure ||
+      automaticRetryExhausted ||
+      _knownFailure(diagnosticCode) != null;
+
+  /// What happened to unresolved local work, separating what is stored on
+  /// this device from what Google has confirmed. Null without such work.
+  String? get localWorkLabel {
+    final parts = <String>[
+      if (counts.pending + counts.inFlight case final waiting when waiting > 0)
+        '${_changes(waiting)} saved on this device, not yet on Google',
+      if (counts.uncertain > 0)
+        '${_changes(counts.uncertain)} sent but not yet confirmed by Google',
+      if (counts.failed > 0) '${_changes(counts.failed)} could not be sent',
+    ];
+    return parts.isEmpty ? null : '${parts.join('; ')}.';
+  }
+
+  /// A safe, concise next step for the current state. It is derived only
+  /// from typed reasons and known diagnostic codes, never from raw errors.
+  String get guidance {
+    final work = counts.total > 0;
+    if (outcome == SyncHealthOutcome.failed) {
+      final known = _knownFailure(diagnosticCode);
+      if (diagnosticCode == 'auth.configuration') return known!.$2;
+      if (automaticRetryExhausted) {
+        return 'Google Tasks kept failing. Retry when ready.';
+      }
+      final retryAt = retryNextAttemptAt;
+      if (retryAt != null && retryAt.toUtc().isAfter(evaluatedAt.toUtc())) {
+        return 'Axiotask retries automatically, or retry now.';
+      }
+      if (known != null) return known.$2;
+    }
+    return switch ((inactiveReason, failureReason, pendingReason)) {
+      (SyncInactiveReason.syncStopped, _, _) =>
+        work
+            ? 'Resume sync to send changes to Google.'
+            : 'Resume sync to update tasks from Google.',
+      (SyncInactiveReason.noAuthorization, _, _)
+          when action == SyncHealthAction.reauthorize =>
+        'Google access ended. Reauthorize to continue syncing.',
+      (SyncInactiveReason.noAuthorization, _, _) =>
+        'Connect a Google account to sync.',
+      (_, SyncFailureReason.noConnection, _) =>
+        'Changes sync when this device is back online.',
+      (_, SyncFailureReason.remoteFailure, _) =>
+        'Google Tasks may be unavailable. Retry later.',
+      (_, SyncFailureReason.stale, _) => 'Refresh to check Google for changes.',
+      (_, SyncFailureReason.applicationFailure, _) =>
+        action == SyncHealthAction.retry
+            ? 'Retry, or open details for the reference code.'
+            : 'Open details for the reference code.',
+      (_, _, SyncPendingReason.retrying) => 'Trying Google Tasks again now.',
+      (_, _, SyncPendingReason.checkingAuthorization) =>
+        'Confirming Google access.',
+      (_, _, SyncPendingReason.verifying) => 'Checking Google for changes.',
+      (_, _, SyncPendingReason.localChanges) => _localChangesStep,
+      _ => '',
+    };
+  }
+
+  /// The next step for queued local work: unsent changes are sent, while
+  /// changes already sent are only awaiting Google's confirmation.
+  String get _localChangesStep {
+    final unsent = counts.pending + counts.inFlight;
+    if (unsent > 0) {
+      return 'Axiotask sends ${unsent == 1 ? 'it' : 'them'} when Google is '
+          'reachable.';
+    }
+    if (counts.uncertain > 0) return 'Axiotask is confirming with Google.';
+    return 'Axiotask sends changes when Google is reachable.';
+  }
 
   String get summary => switch (outcome) {
     SyncHealthOutcome.inactive => 'Inactive',
@@ -214,7 +329,7 @@ final class SyncHealth {
   String get reasonLabel {
     if (outcome == SyncHealthOutcome.failed &&
         diagnosticCode == 'auth.configuration') {
-      return 'Google connection configuration needs repair';
+      return _knownFailure(diagnosticCode)!.$1;
     }
     if (outcome == SyncHealthOutcome.failed && automaticRetryExhausted) {
       return 'Automatic retry exhausted';
@@ -223,22 +338,13 @@ final class SyncHealth {
     if (outcome == SyncHealthOutcome.failed &&
         retryAt != null &&
         retryAt.toUtc().isAfter(evaluatedAt.toUtc())) {
-      return 'Retry ${retryAttemptCount + 1} after ${_exactUtc(retryAt)}';
+      return 'Retry ${retryAttemptCount + 1} after '
+          '${_exactUtc(retryAt, omitDateOf: evaluatedAt)}';
     }
     if (outcome == SyncHealthOutcome.failed) {
-      final explanation = switch (diagnosticCode) {
-        'google_tasks.malformed_success' =>
-          'Google returned task data Axiotask could not read',
-        'sync.unsupported_task_depth' => 'A task has too many nested subtasks',
-        'sync.unsupported_task_parent' =>
-          'A subtask refers to a missing parent',
-        'sync.coordinator_run_failed' =>
-          'Sync stopped unexpectedly. Open details',
-        'sync.settings_read_failed' => 'Could not read local sync settings',
-        'sync.run_timeout' => 'Sync took too long. Retry when connected',
-        _ => null,
-      };
-      if (explanation != null) return explanation;
+      if (_knownFailure(diagnosticCode) case (final reason, _)?) {
+        return reason;
+      }
     }
     return switch ((inactiveReason, failureReason, pendingReason)) {
       (SyncInactiveReason.syncStopped, _, _) => 'Sync stopped',
@@ -246,7 +352,7 @@ final class SyncHealth {
       (_, SyncFailureReason.noConnection, _) => 'No connection',
       (_, SyncFailureReason.remoteFailure, _) => 'Google Tasks failed',
       (_, SyncFailureReason.applicationFailure, _) =>
-        'Sync could not finish. Open details',
+        'Sync could not finish. Cause unknown',
       (_, SyncFailureReason.stale, _) => 'Cached data is stale',
       (_, _, SyncPendingReason.checkingAuthorization) =>
         'Checking authorization',
@@ -298,6 +404,53 @@ final class SyncHealth {
 }
 
 const Duration syncFreshnessWindow = Duration(minutes: 5);
+
+/// Explanation and next step for diagnostic codes whose cause is known.
+(String, String)? _knownFailure(String? code) => switch (code) {
+  'auth.configuration' => (
+    'Google connection configuration needs repair',
+    'Open diagnostics for the reference code.',
+  ),
+  'google_tasks.malformed_success' => (
+    'Google returned task data Axiotask could not read',
+    'Cached tasks are unchanged. Retry later.',
+  ),
+  final String code when code.startsWith('sync.malformed_') => (
+    'Google returned task data Axiotask could not read',
+    'Cached tasks are unchanged. Open diagnostics for the reference code.',
+  ),
+  'google_tasks.rate_limited' => (
+    'Google Tasks is limiting requests',
+    'Retry in a few minutes.',
+  ),
+  'google_tasks.remote_unavailable' => (
+    'Google Tasks is temporarily unavailable',
+    'Retry later.',
+  ),
+  'sync.unsupported_task_depth' => (
+    'A task has too many nested subtasks',
+    'Move the deepest subtask up a level in Google Tasks, then retry.',
+  ),
+  'sync.unsupported_task_parent' => (
+    'A subtask refers to a missing parent',
+    'Check the subtask in Google Tasks, then retry.',
+  ),
+  'sync.coordinator_run_failed' => (
+    'Sync stopped unexpectedly. Open details',
+    'Retry. If it happens again, open diagnostics.',
+  ),
+  'sync.settings_read_failed' => (
+    'Could not read local sync settings',
+    'Restart Axiotask. If it happens again, open diagnostics.',
+  ),
+  'sync.run_timeout' => (
+    'Sync took too long. Retry when connected',
+    'Check the connection, then retry.',
+  ),
+  _ => null,
+};
+
+String _changes(int count) => '$count ${count == 1 ? 'change' : 'changes'}';
 
 SyncHealth projectSyncHealth({
   required PersistedSyncFacts facts,
@@ -449,12 +602,19 @@ SyncHealth projectSyncHealth({
   return result(outcome: SyncHealthOutcome.good);
 }
 
-String _exactUtc(DateTime value) {
+/// Exact UTC time; the date is left out when it is [omitDateOf]'s UTC day.
+String _exactUtc(DateTime value, {DateTime? omitDateOf}) {
+  String two(int part) => part.toString().padLeft(2, '0');
   final utc = value.toUtc();
-  return '${utc.year.toString().padLeft(4, '0')}-'
-      '${utc.month.toString().padLeft(2, '0')}-'
-      '${utc.day.toString().padLeft(2, '0')} '
-      '${utc.hour.toString().padLeft(2, '0')}:'
-      '${utc.minute.toString().padLeft(2, '0')}:'
-      '${utc.second.toString().padLeft(2, '0')} UTC';
+  final day = omitDateOf?.toUtc();
+  final sameDay =
+      day != null &&
+      day.year == utc.year &&
+      day.month == utc.month &&
+      day.day == utc.day;
+  final date = sameDay
+      ? ''
+      : '${utc.year.toString().padLeft(4, '0')}-${two(utc.month)}-'
+            '${two(utc.day)} ';
+  return '$date${two(utc.hour)}:${two(utc.minute)}:${two(utc.second)} UTC';
 }

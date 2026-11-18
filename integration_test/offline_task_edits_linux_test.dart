@@ -93,8 +93,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Sync stopped'), findsWidgets);
-    expect(find.text('2 unresolved'), findsOneWidget);
+    expect(find.textContaining('Sync stopped'), findsWidgets);
+    expect(
+      find.textContaining('2 changes saved on this device'),
+      findsOneWidget,
+    );
     viewModel.selectTask(task);
     await tester.pump();
     expect(find.text('Durable 🌍'), findsOneWidget);

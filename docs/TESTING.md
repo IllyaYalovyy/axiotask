@@ -1139,6 +1139,47 @@ add button that joins the commands at 360 landscape and never squeezes the
 title in a 320 x 420 window, 12
 viewports, desktop and wide Android without the bar, and the
 `phone_home_navigation_{light,dark}` goldens).
+Case 18 (routine local edit feedback) and the tracked finding
+`failure-message-usability` are corrected by
+`integration_test/android_regression/sync_status_test.dart`. Case 18 writes a
+verified sync 30 seconds before the fixture clock and lets the production
+health projection (`DatabaseSyncHealthRepository`) read the fixture's own
+durable facts. It completes a task by touch, requires SQLite to hold the
+completion and its publication intent, and requires the projected health to
+be Pending with exactly one change awaiting Google. The status must stay one
+compact header control: no `Pending` text, no banner, never `Synced`, the
+unconfirmed count as a badge, a 48 dp button whose label says the change is
+saved on this device but not yet on Google, the header unchanged and the list
+moved only by the completion's own Undo bar. Its details must separate local
+persistence from Google confirmation. A controllable runtime-facts source
+then reports the routine run that publishes the edit (`verifying` with a
+verification obligation), and the same contract must hold while the change
+is still unconfirmed. It must stay compact at 320, 360 and 443 widths, in
+portrait and landscape, at 1x and 2x text.
+`failure-message-usability` renders offline, stale, retry waiting, retry
+exhausted, rate limited, hierarchy, unknown, paused, reauthorize and retrying
+states at 320, 360 and 443 widths, in landscape, and at 2x text. Each must
+show its specific headline and explanation (an unknown cause says so) with
+the headline and last-success age never cut off, a banner at most a quarter
+of a 1x phone and 40% at 2x text (where its text scrolls and the controls stay
+in view) that leaves the first task reachable, and 48 dp details and recovery
+buttons. Each recovery action is tapped and must reach its own coordinator
+port (retry, resume, reauthorize) exactly once; the banner must then follow
+the coordinator's reported state, and recovery returns to the compact
+status. Baseline case 19 keeps the audit's assertions and adds the
+explanation, the bounded banner, an accessible Retry, the reference code in
+details and the Retry hand-off, so it is now labelled `working`. Host
+coverage: `test/sync/health/sync_health_test.dart` (compactness rules
+through the production projection, an edit through debounce, verification
+while pending and in flight, then Good, the freshness boundary, explanations
+and that no raw failure text reaches them),
+`test/features/tasks/sync_health_header_test.dart` (every state at 320 and
+360 widths and 2x text: bounded banner, semantics, touch targets, action
+dispatch, no credentials or codes in visible text, details, state changes)
+and `test/features/tasks/sync_status_shell_test.dart` (the real shell keeps
+the list in place for a queued edit and through the run that publishes it,
+and sends each action to its view-model port once while a control is
+pending).
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 
@@ -1158,7 +1199,7 @@ That includes `integration_test/` files and the temporary listener that
 `flutter test` builds in its place. Test runs can therefore never replace or
 uninstall the production installation.
 
-Run the explicitly named baseline subset (the 17 audit passes; 19, 26 and 27
+Run the explicitly named baseline subset (the 17 audit passes; 26 and 27
 are labelled `limited-pass`) on an emulator or device:
 
 ```text

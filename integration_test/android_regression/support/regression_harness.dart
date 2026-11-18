@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:axiotask/src/app/axiotask_app.dart';
 import 'package:axiotask/src/core/clock.dart';
 import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
+import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
 import 'package:axiotask/src/data/database/cache_dao.dart';
 import 'package:axiotask/src/data/database/task_lists_repository.dart';
@@ -205,6 +206,19 @@ final class RegressionFixture {
   /// Number of refresh requests the UI issued; nothing reaches Google.
   int refreshRequests = 0;
 
+  /// Sync controls the UI invoked through the view model's coordinator
+  /// ports, in order; nothing reaches Google.
+  final syncControls = <SyncControl>[];
+
+  /// Runs inside a sync control after it is recorded, standing in for the
+  /// coordinator's effect on health. Null leaves health unchanged.
+  Future<void> Function(SyncControl control)? onSyncControl;
+
+  Future<void> _control(SyncControl control) async {
+    syncControls.add(control);
+    await onSyncControl?.call(control);
+  }
+
   final _captureBoundary = GlobalKey();
   final _capturedNames = <String>{};
 
@@ -393,6 +407,14 @@ final class RegressionFixture {
     clock: clock,
     preferencesRepository: preferences,
     refreshRequested: () async => refreshRequests += 1,
+    retryRequested: () => _control(SyncControl.retry),
+    reauthorizeRequested: () => _control(SyncControl.reauthorize),
+    resumeSyncRequested: () => _control(SyncControl.resume),
+    stopSyncRequested: () => _control(SyncControl.stop),
+    connectRequested: () async {
+      await _control(SyncControl.connect);
+      return const Success<void>(null);
+    },
     viewExportDestination: viewExportDestination,
   );
 
@@ -500,9 +522,21 @@ StoredPreferencesRepository _preferences(
   ),
 );
 
+/// A coordinator port the view model can invoke.
+enum SyncControl { retry, reauthorize, resume, stop, connect }
+
 /// Health source the test drives explicitly instead of a sync engine.
 final class ControlledSyncHealth implements SyncHealthRepository {
   final _changes = StreamController<SyncHealth>.broadcast();
+  StreamSubscription<SyncHealth>? _source;
+
+  /// Forwards every value of [source], such as the production projection
+  /// of the fixture database's durable facts, until [close].
+  Future<void> follow(Stream<SyncHealth> source) async {
+    await _source?.cancel();
+    _source = source.listen(set);
+  }
+
   SyncHealth _current = SyncHealth(
     outcome: SyncHealthOutcome.good,
     counts: const SyncWorkCounts(),
@@ -521,7 +555,10 @@ final class ControlledSyncHealth implements SyncHealthRepository {
     yield* _changes.stream;
   }
 
-  Future<void> close() => _changes.close();
+  Future<void> close() async {
+    await _source?.cancel();
+    await _changes.close();
+  }
 }
 
 /// Lays the application out at [viewport]'s logical size and text scale,

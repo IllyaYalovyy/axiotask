@@ -58,6 +58,7 @@ const _correctedAuditFailures = <String, String>{
   '14_duplicate_action': 'android-task-details',
   '15_export_action': 'android-export',
   '17_search_open_result': 'android-search-navigation',
+  '18_routine_local_edit_feedback': 'android-sync-status-feedback',
   '20_phone_add_affordance': 'android-capture-composer',
   '22_touch_target_size': 'android-task-row-actions',
   '23_detail_previous_next': 'android-task-details',
@@ -71,6 +72,7 @@ const _correctedAuditFailures = <String, String>{
 const _correctedFindings = <String, String>{
   'bottom-navigation': 'android-home-navigation',
   'task-row-metadata': 'android-home-navigation',
+  'failure-message-usability': 'android-sync-status-feedback',
 };
 
 const _auditPassingNumbers = <String>{
@@ -107,7 +109,8 @@ void main() {
         for (final entry in baseline)
           if (entry.label == CaseLabel.limitedPass) entry.id.substring(0, 2),
       },
-      {'19', '26', '27'},
+      // Case 19 now also asserts the explanation and Retry recovery.
+      {'26', '27'},
     );
   });
 

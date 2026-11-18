@@ -26,10 +26,26 @@ Desktop places health in the always-visible application header and exposes
 details without leaving the current work. A healthy desktop status is a calm
 `Synced` label with a relative age; its exact completion time and diagnostics
 route are in Sync details. Zero unresolved work stays out of the header.
-Pending, failed, stopped, and unauthorized states expand with their reason,
-nonzero unresolved count, and recovery action. Android uses the top app bar plus a
-persistent banner for failed states. Neither platform hides
-an expired token in a settings screen or transient toast.
+Routine local work stays compact too: verification of an earlier success
+with no unresolved work, and edits made less than five minutes after a
+verified sync with nothing uncertain or failed, both while they are queued
+and while the run that publishes them verifies with Google. The status shows
+the unconfirmed count (as a badge on phones; `Saved on device` or `Checking
+Google` with the waiting count in wide windows), and its label and details
+say the change is saved on this device but not yet confirmed by Google; it
+never reads `Synced` while work remains.
+Failed, uncertain, retrying, stopped, unauthorized and checking states, and
+local work behind an old or absent success, expand into a bounded banner: the
+outcome and a specific reason on one line, what happened to unsent changes
+and the next step, the last-success age, the recovery action and Sync
+details. The banner is at most 40% of the screen; at large text its text
+scrolls while the controls stay in view. A failure whose cause is not
+recognized says the cause is unknown
+and points to the reference code in details instead of implying a reason.
+Explanations come from typed reasons and known diagnostic codes, never from
+raw errors. Android uses the top app bar plus this banner for failed states.
+Neither platform hides an expired token in a settings screen or transient
+toast.
 
 ## Information architecture
 

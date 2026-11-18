@@ -52,7 +52,7 @@ void main() {
       await tester.pumpWidget(fixture.widget);
       await tester.pump();
       expect(find.byKey(const Key('sync-health-pending')), findsOneWidget);
-      expect(find.text('Verifying with Google'), findsNothing);
+      expect(find.textContaining('Verifying with Google'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.tap(find.byKey(const Key('sync-health-pending')));
       await tester.pumpAndSettle();
@@ -69,13 +69,14 @@ void main() {
     await tester.pump();
 
     expect(find.text('Cached parent'), findsOneWidget);
-    expect(find.text('Pending'), findsWidgets);
-    expect(find.text('Verifying with Google'), findsOneWidget);
+    expect(find.textContaining('Pending'), findsWidgets);
+    expect(find.textContaining('Verifying with Google'), findsOneWidget);
     expect(find.text('Last successful sync: Never'), findsOneWidget);
     expect(
       find.bySemanticsLabel(
         'Synchronization Pending. Verifying with Google. '
-        'Last successful sync Never. No unresolved changes.',
+        'No unresolved changes. Checking Google for changes. '
+        'Last successful sync Never.',
       ),
       findsOneWidget,
     );
@@ -125,7 +126,7 @@ void main() {
             SyncFailureReason.noConnection => 'No connection',
             SyncFailureReason.remoteFailure => 'Google Tasks failed',
             SyncFailureReason.applicationFailure =>
-              'Sync could not finish. Open details',
+              'Sync could not finish. Cause unknown',
             SyncFailureReason.stale => 'Cached data is stale',
           },
           reason == SyncFailureReason.applicationFailure ? '' : 'Retry',
@@ -136,7 +137,7 @@ void main() {
       final fixture = _ShellFixture(health);
       await tester.pumpWidget(fixture.widget);
       await tester.pump();
-      expect(find.text(reason), findsOneWidget);
+      expect(find.textContaining(reason), findsOneWidget);
       if (action.isNotEmpty) expect(find.text(action), findsOneWidget);
       fixture.dispose();
     }
