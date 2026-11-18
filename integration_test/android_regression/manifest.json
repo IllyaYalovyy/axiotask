@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "manifest_version": 7,
+  "manifest_version": 8,
   "audit": {
     "date": "2026-11-15",
     "reference": {
@@ -213,9 +213,10 @@
       "flow": "Direct editing in details",
       "audit_classification": "Lost interaction",
       "baseline": {
-        "expected": "fail"
+        "expected": "pass",
+        "label": "working"
       },
-      "contract": "outstanding",
+      "contract": "implemented",
       "test_path": "integration_test/android_regression/task_details_test.dart",
       "owner": "android-task-details",
       "subsets": [

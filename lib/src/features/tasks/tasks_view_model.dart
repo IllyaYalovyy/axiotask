@@ -21,6 +21,7 @@ import '../../domain/repository/task_lists_repository.dart';
 import '../../domain/repository/tasks_repository.dart';
 import '../../sync/health/sync_health.dart';
 import '../../sync/health/sync_health_repository.dart';
+import 'task_content_autosave.dart';
 
 enum TransientTaskFeedbackKind { invalidDrop, bulkSuccess }
 
@@ -370,6 +371,17 @@ final class TasksViewModel extends ChangeNotifier {
   var _hasReceivedBulkOperationSnapshot = false;
 
   static const transientFeedbackDuration = Duration(seconds: 4);
+
+  /// Inline title and notes autosave for task details. It writes through
+  /// the shared field commands and outlives any one detail editor, so a
+  /// pending save still lands after the editor closes.
+  late final TaskContentAutosave contentAutosave = TaskContentAutosave(
+    write: _writeTaskContent,
+    storedTask: (taskId) =>
+        _firstWhereOrNull(_state.tasks, (task) => task.id == taskId),
+    scheduler: feedbackScheduler,
+    describeFailure: (failure) => _taskFailureMessage(failure.code),
+  );
 
   TasksViewState get state => _state;
 
@@ -1017,23 +1029,7 @@ final class TasksViewModel extends ChangeNotifier {
           );
           _replaceState(
             _state.copyWith(
-              taskCommandFailureMessage: switch (failure.code) {
-                'task.title_too_long' =>
-                  'Task titles can contain at most 1024 characters.',
-                'task.notes_too_long' =>
-                  'Task notes can contain at most 8192 characters.',
-                'task.unsupported_depth' || 'task.subtree_would_exceed_depth' =>
-                  'Axiotask supports one subtask level.',
-                'task.parent_deleted' =>
-                  'A deleted task cannot become a parent.',
-                'task.parent_cross_list' || 'task.parent_cross_account' =>
-                  'The parent must be in the same Google task list.',
-                'task.completion_undo_expired' =>
-                  'The completion can no longer be undone.',
-                'task.completion_undo_unavailable' =>
-                  'The completion changed again and can no longer be undone.',
-                _ => 'The task could not be saved safely.',
-              },
+              taskCommandFailureMessage: _taskFailureMessage(failure.code),
             ),
           );
           onFailure?.call(failure);
@@ -1043,6 +1039,51 @@ final class TasksViewModel extends ChangeNotifier {
       _replaceState(_state.copyWith(isTaskCommandPending: false));
     }
   }
+
+  /// Writes one inline detail edit through the shared field commands, which
+  /// keep the task's other stored values. Unlike [_performTaskCommand] it is
+  /// not single-flight (the autosave orders its own writes per task) and it
+  /// leaves the detail actions enabled while typing saves in the background.
+  Future<Outcome<void>> _writeTaskContent(TaskContentChange change) async {
+    final command = switch (change) {
+      TaskTitleChange(:final taskId, :final title) => SetTaskTitleCommand(
+        accountId: accountId,
+        taskId: taskId,
+        title: title,
+      ),
+      TaskNotesChange(:final taskId, :final notes) => SetTaskNotesCommand(
+        accountId: accountId,
+        taskId: taskId,
+        notes: notes,
+      ),
+    };
+    final result = await tasksRepository.apply(command);
+    switch (result) {
+      case Success<void>():
+        _recordUi('ui.task_autosave_completed', DiagnosticEventKind.transition);
+        // The edit is stored and its publication intent is durable; a
+        // failure to wake sync now must not report the save as failed.
+        try {
+          if (!_disposed) await localEditCommitted?.call();
+        } on Object {
+          _recordUi(
+            'ui.task_autosave_sync_wake_failed',
+            DiagnosticEventKind.failure,
+          );
+        }
+      case Failed<void>(:final failure):
+        _recordUi(
+          'ui.task_autosave_failed',
+          DiagnosticEventKind.failure,
+          failureCode: failure.code,
+        );
+    }
+    return result;
+  }
+
+  /// Stores every pending inline detail edit; the runtime awaits this
+  /// before it disposes the view model and closes the database.
+  Future<void> flushPendingEdits() => contentAutosave.flushAll();
 
   Future<void> _performListCommand<T>(Future<Outcome<T>> Function() action) {
     final existing = _listCommandInFlight;
@@ -1436,7 +1477,13 @@ final class TasksViewModel extends ChangeNotifier {
   }
 
   void _replaceState(TasksViewState value) {
+    final previous = _state.selectedTaskId;
     _state = value;
+    // Leaving a task's details (Back, another task, a list or view switch,
+    // deletion) stores its inline edits without waiting for the debounce.
+    if (previous != null && previous != value.selectedTaskId) {
+      unawaited(contentAutosave.flush(previous));
+    }
     notifyListeners();
   }
 
@@ -1489,9 +1536,24 @@ final class TasksViewModel extends ChangeNotifier {
     _calendarTimer?.cancel();
     _transientFeedbackTimer?.cancel();
     _completionUndoTimer?.cancel();
+    contentAutosave.dispose();
     super.dispose();
   }
 }
+
+String _taskFailureMessage(String code) => switch (code) {
+  'task.title_too_long' => 'Task titles can contain at most 1024 characters.',
+  'task.notes_too_long' => 'Task notes can contain at most 8192 characters.',
+  'task.unsupported_depth' ||
+  'task.subtree_would_exceed_depth' => 'Axiotask supports one subtask level.',
+  'task.parent_deleted' => 'A deleted task cannot become a parent.',
+  'task.parent_cross_list' || 'task.parent_cross_account' =>
+    'The parent must be in the same Google task list.',
+  'task.completion_undo_expired' => 'The completion can no longer be undone.',
+  'task.completion_undo_unavailable' =>
+    'The completion changed again and can no longer be undone.',
+  _ => 'The task could not be saved safely.',
+};
 
 const Object _notProvided = Object();
 

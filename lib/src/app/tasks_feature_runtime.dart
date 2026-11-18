@@ -305,6 +305,9 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
 
   @override
   Future<void> close() async {
+    // Inline detail edits still waiting for their debounce are stored
+    // before the database closes.
+    await viewModel.flushPendingEdits();
     viewModel.dispose();
     await coordinator?.close();
     await transport?.close();

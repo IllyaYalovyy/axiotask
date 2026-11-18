@@ -94,6 +94,63 @@ void main() {
   });
 
   test(
+    'inline autosave writes field commands and yields to the dialog',
+    () async {
+      final repository = _TasksRepository();
+      final tasks = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: repository,
+        syncHealthRepository: const _HealthRepository(),
+        clock: ManualClock(DateTime.utc(2026, 8, 15, 12)),
+      );
+      addTearDown(tasks.dispose);
+      tasks.start();
+      repository.snapshots.add(_snapshot);
+      await pumpEventQueue();
+      tasks.selectTask(const TaskId(11));
+      final detail = TaskDetailViewModel.fromTasks(tasks);
+      final autosave = detail.contentAutosave;
+      expect(autosave, same(tasks.contentAutosave));
+
+      // Typed inline text that is still waiting for its debounce is stored
+      // before an explicit dialog save, which then supersedes the draft.
+      autosave.open(_snapshot.tasks.first);
+      autosave.edit(const TaskId(11), title: 'Typed inline', notes: '');
+      await detail.saveContent(
+        task: _snapshot.tasks.first,
+        title: 'From the dialog',
+        notes: 'Dialog notes',
+      );
+      expect(repository.applied.map((command) => command.runtimeType), <Type>[
+        SetTaskTitleCommand,
+        UpdateTaskContentCommand,
+      ]);
+      expect(
+        (repository.applied.first as SetTaskTitleCommand).title,
+        'Typed inline',
+      );
+      final draft = autosave.draft(const TaskId(11))!;
+      expect(draft.title, 'From the dialog');
+      expect(draft.notes, 'Dialog notes');
+      expect(tasks.state.isTaskCommandPending, isFalse);
+
+      // Selecting another task stores the edit without waiting.
+      autosave.edit(const TaskId(11), title: 'Before switching', notes: 'x');
+      tasks.selectTask(const TaskId(12));
+      await pumpEventQueue();
+      expect(
+        repository.applied.skip(2).map((command) => command.taskId),
+        const <TaskId>[TaskId(11), TaskId(11)],
+      );
+      expect(
+        (repository.applied[2] as SetTaskTitleCommand).title,
+        'Before switching',
+      );
+      expect((repository.applied[3] as SetTaskNotesCommand).notes, 'x');
+    },
+  );
+
+  test(
     'completion and every date action use the shared command boundary',
     () async {
       final repository = _TasksRepository();

@@ -9,10 +9,19 @@
 // due command, so the parent/subtask cascade and its Undo apply, and the
 // durable publication intent must carry the date. A subtask's later date
 // changes only the subtask at narrow, landscape and 2x-text phone shapes.
-// Cases 11, 14 and 23 share this file's manifest path and stay outstanding.
+//
+// Case 11 failed the same audit: details showed read-only title and notes,
+// so editing needed the separate Edit dialog and Save. Its contract edits
+// the title and multiline notes in place by touch and proves, from SQLite and
+// the durable publication intent, that the text is stored on a focus change,
+// on Back, when opening another task and after the typing debounce; that
+// reopening the task shows the stored text; and that an empty title is
+// rejected while the notes still save.
+// Cases 14 and 23 share this file's manifest path and stay outstanding.
 // Run through tool/android_regression/runner.dart.
 import 'package:axiotask/src/data/database/desired_state_dao.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
+import 'package:axiotask/src/features/tasks/task_content_autosave.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -209,6 +218,157 @@ void main() {
     expect(cleared?.due, isNull);
     expect(cleared?.state, DesiredStateLifecycle.pending);
     expect(f.model.state.taskCommandFailureMessage, isNull);
+  });
+
+  regressionCase('11_inline_detail_edit', phoneOnHost: true, (t, f) async {
+    final desired = DesiredStateDao(f.database);
+    final title = find.byKey(const Key('task-detail-title'));
+    final notes = find.byKey(const Key('task-detail-notes'));
+    final parentBefore = await f.task(f.parent);
+
+    await f.openParent(t);
+    expect(
+      find.byType(TextField),
+      findsWidgets,
+      reason: 'v1.5.3 title and notes are editable directly with autosave',
+    );
+    expect(find.widgetWithText(TextField, 'Audit parent'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextField, 'Audit notes https://example.com'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(FilledButton, 'Save'), findsNothing);
+    expect(find.text('Changes save automatically'), findsOneWidget);
+    await f.capture(t, 'inline_fields');
+
+    // Title by touch; tapping the notes field moves focus and stores it.
+    await t.tap(title);
+    await t.pump();
+    await t.enterText(title, 'Inline parent title');
+    await t.pump();
+    expect((await f.task(f.parent)).title, 'Audit parent');
+    await t.tap(notes);
+    await settleUntil(
+      t,
+      () async => (await f.task(f.parent)).title == 'Inline parent title',
+      description: 'the title to store when focus moves to the notes',
+    );
+
+    // Multiline notes, then Android Back while the save is still pending.
+    await t.enterText(notes, 'First inline line\nSecond inline line');
+    await t.pump();
+    await f.capture(t, 'editing_notes', settle: false);
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, isNull, reason: 'Back left details');
+    await settleUntil(
+      t,
+      () async =>
+          (await f.task(f.parent)).notes ==
+          'First inline line\nSecond inline line',
+      description: 'the notes to store on Back',
+    );
+    final stored = await f.task(f.parent);
+    expect(stored.status, parentBefore.status);
+    expect(stored.due, parentBefore.due, reason: 'text saves keep the date');
+    final intent = await desired.readTask(f.account, f.parent);
+    expect(intent?.title, 'Inline parent title');
+    expect(intent?.notes, 'First inline line\nSecond inline line');
+    expect(intent?.state, DesiredStateLifecycle.pending);
+    expect(f.model.contentAutosave.hasUnsavedChanges, isFalse);
+
+    // Navigating back shows the stored text in the fields.
+    await t.tap(find.text('Inline parent title'));
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, f.parent);
+    expect(
+      find.widgetWithText(TextField, 'Inline parent title'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(TextField, 'First inline line\nSecond inline line'),
+      findsOneWidget,
+    );
+
+    // Opening a subtask mid-edit stores the parent's text for the parent
+    // only; Back returns to the parent showing it.
+    await t.tap(title);
+    await t.pump();
+    await t.enterText(title, 'Parent renamed before switching');
+    await t.pump();
+    await t.ensureVisible(find.text('Audit child'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Audit child'));
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, f.child);
+    expect(find.widgetWithText(TextField, 'Audit child'), findsOneWidget);
+    await settleUntil(
+      t,
+      () async =>
+          (await f.task(f.parent)).title == 'Parent renamed before switching',
+      description: 'the parent title to store when a subtask opens',
+    );
+    expect((await f.task(f.child)).title, 'Audit child');
+
+    // Rapid typing in the subtask stores once typing pauses, without
+    // leaving the details.
+    await t.tap(notes);
+    await t.pump();
+    for (final text in <String>['C', 'Ch', 'Chi', 'Child notes']) {
+      await t.enterText(notes, text);
+      await t.pump();
+    }
+    expect((await f.task(f.child)).notes, isNull, reason: 'still typing');
+    f.clock.advance(TaskContentAutosave.defaultDebounce);
+    await settleUntil(
+      t,
+      () async => (await f.task(f.child)).notes == 'Child notes',
+      description: 'the subtask notes to store after the typing pause',
+    );
+    expect(f.model.state.selectedTaskId, f.child);
+
+    // An empty title is rejected with guidance; the notes still save.
+    await t.tap(title);
+    await t.pump();
+    await t.enterText(title, '');
+    await t.pump();
+    expect(
+      find.text('Enter a title. The saved title stays until you do.'),
+      findsOneWidget,
+    );
+    await f.capture(t, 'empty_title_rejected');
+    await t.tap(notes);
+    await t.pump();
+    await t.enterText(notes, 'Notes kept without a title');
+    await t.pump();
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+    expect(f.model.state.selectedTaskId, f.parent, reason: 'Back to parent');
+    expect(
+      find.widgetWithText(TextField, 'Parent renamed before switching'),
+      findsOneWidget,
+    );
+    await settleUntil(
+      t,
+      () async => (await f.task(f.child)).notes == 'Notes kept without a title',
+      description: 'the subtask notes to store despite the empty title',
+    );
+    expect((await f.task(f.child)).title, 'Audit child');
+    expect(
+      (await desired.readTask(f.account, f.child))?.title,
+      'Audit child',
+      reason: 'the empty title never reached the publication intent',
+    );
+    await t.ensureVisible(find.text('Audit child'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Audit child'));
+    await t.pumpAndSettle();
+    expect(find.widgetWithText(TextField, 'Audit child'), findsOneWidget);
+    expect(
+      find.widgetWithText(TextField, 'Notes kept without a title'),
+      findsOneWidget,
+    );
+    expect(f.model.contentAutosave.hasUnsavedChanges, isFalse);
   });
 }
 

@@ -5,6 +5,7 @@ import '../../domain/model/tasks.dart';
 import '../../domain/policy/date_workflow.dart';
 import '../../domain/policy/effective_due.dart';
 import '../../domain/policy/subtask_progress.dart';
+import 'task_content_autosave.dart';
 import 'tasks_view_model.dart';
 
 final class TaskDetailState {
@@ -63,6 +64,10 @@ final class TaskDetailViewModel implements Listenable {
   /// The calendar day the application clock observes, which date pickers
   /// mark as today.
   TaskDate get today => _tasks.state.today;
+
+  /// Inline title and notes autosave. It belongs to [TasksViewModel], so a
+  /// save started by one detail editor finishes after that editor closes.
+  TaskContentAutosave get contentAutosave => _tasks.contentAutosave;
 
   /// The current stored version of [taskId], if it is still cached.
   CachedTask? taskById(TaskId taskId) => _tasks.state.tasks
@@ -138,7 +143,10 @@ final class TaskDetailViewModel implements Listenable {
     required CachedTask task,
     required String title,
     required String? notes,
-  }) {
+  }) async {
+    // Inline edits still waiting for their debounce are written first, so
+    // they cannot land after, and overwrite, this explicit save.
+    await contentAutosave.flush(task.id);
     // The editor may have been opened before a completion, Undo or date
     // change; saving text must not write the editor's stale status or date.
     final current =
@@ -146,13 +154,16 @@ final class TaskDetailViewModel implements Listenable {
             .where((candidate) => candidate.id == task.id)
             .firstOrNull ??
         task;
-    return _tasks.updateTaskContent(
+    await _tasks.updateTaskContent(
       taskId: task.id,
       title: title,
       notes: notes,
       status: current.status,
       due: current.due,
     );
+    if (_tasks.state.taskCommandFailureMessage == null) {
+      contentAutosave.adoptSaved(task.id, title: title, notes: notes);
+    }
   }
 
   Future<void> toggleCompletion(TaskId taskId) {

@@ -15,6 +15,7 @@ import 'package:axiotask/src/domain/policy/smart_views.dart';
 import 'package:axiotask/src/domain/repository/preferences_repository.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
+import 'package:axiotask/src/features/tasks/task_content_autosave.dart';
 import 'package:axiotask/src/features/tasks/task_detail_view_model.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
 import 'package:axiotask/src/features/tasks/widgets/task_details.dart';
@@ -318,6 +319,10 @@ void main() {
 
     await tester.tap(find.text('Cached child'));
     await tester.pump();
+    // Each task's details open scrolled to their top (title and notes).
+    await tester.ensureVisible(
+      find.byKey(const Key('task-detail-structure-menu')),
+    );
     await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Change parent'));
@@ -333,6 +338,9 @@ void main() {
     expect(reparent.taskId, const TaskId(12));
     expect(reparent.parentTaskId, const TaskId(13));
 
+    await tester.ensureVisible(
+      find.byKey(const Key('task-detail-structure-menu')),
+    );
     await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Promote to task'));
@@ -345,6 +353,9 @@ void main() {
 
     await tester.tap(find.text('Leaf task'));
     await tester.pump();
+    await tester.ensureVisible(
+      find.byKey(const Key('task-detail-structure-menu')),
+    );
     await tester.tap(find.byKey(const Key('task-detail-structure-menu')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Make subtask'));
@@ -949,6 +960,301 @@ void main() {
       find.text('2 tasks saved locally and waiting for Google.'),
       findsOneWidget,
     );
+  });
+
+  group('inline detail editing', () {
+    const phone = Size(412, 900);
+    final title = find.byKey(const Key('task-detail-title'));
+    final notes = find.byKey(const Key('task-detail-notes'));
+    const debounce = TaskContentAutosave.defaultDebounce;
+
+    Future<_ShellFixture> openPhoneDetail(WidgetTester tester) async {
+      tester.view.physicalSize = phone;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(_health(SyncHealthOutcome.pending));
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+      return fixture;
+    }
+
+    List<String> writes(_ShellFixture fixture) => <String>[
+      for (final command in fixture.tasks.applied)
+        switch (command) {
+          SetTaskTitleCommand(:final taskId, :final title) =>
+            '${taskId.value} title $title',
+          SetTaskNotesCommand(:final taskId, :final notes) =>
+            '${taskId.value} notes $notes',
+          _ => '${command.taskId.value} ${command.runtimeType}',
+        },
+    ];
+
+    testWidgets('title and multiline notes are fields that save on blur', (
+      tester,
+    ) async {
+      final fixture = await openPhoneDetail(tester);
+      expect(find.widgetWithText(TextField, 'Cached parent'), findsOneWidget);
+      expect(
+        find.widgetWithText(
+          TextField,
+          'Stored locally while verification is pending.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        tester.widget<TextField>(notes).keyboardType,
+        TextInputType.multiline,
+      );
+
+      await tester.tap(title);
+      await tester.enterText(title, 'Renamed parent');
+      await tester.pump();
+      expect(find.text('Unsaved changes'), findsOneWidget);
+      expect(fixture.tasks.applied, isEmpty, reason: 'still typing');
+      // Moving focus to the notes stores the title without a Save button.
+      await tester.tap(notes);
+      await tester.pump();
+      expect(writes(fixture), <String>['11 title Renamed parent']);
+      await tester.enterText(notes, 'Line one\nLine two');
+      await tester.pump();
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      expect(writes(fixture), <String>[
+        '11 title Renamed parent',
+        '11 notes Line one\nLine two',
+      ]);
+      expect(find.text('Changes save automatically'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, 'Save'), findsNothing);
+    });
+
+    testWidgets('viewing a padded-title task changes nothing', (tester) async {
+      tester.view.physicalSize = phone;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: CachedTasksSnapshot(
+          accountId: _snapshot.accountId,
+          taskLists: _snapshot.taskLists,
+          tasks: <CachedTask>[
+            _snapshot.tasks.first.copyWith(title: '  Padded parent '),
+            ..._snapshot.tasks.skip(1),
+          ],
+          completeness: _snapshot.completeness,
+        ),
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.textContaining('Padded parent'));
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+      expect(find.text('Changes save automatically'), findsOneWidget);
+      expect(
+        find.text('Enter a title. The saved title stays until you do.'),
+        findsNothing,
+      );
+      await tester.pump(debounce * 2);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+      expect(fixture.tasks.applied, isEmpty, reason: 'nothing was edited');
+    });
+
+    testWidgets('typing saves after a pause and Back stores the rest', (
+      tester,
+    ) async {
+      final fixture = await openPhoneDetail(tester);
+      await tester.tap(notes);
+      for (final text in <String>['N', 'No', 'Not', 'Note']) {
+        await tester.enterText(notes, text);
+        await tester.pump(debounce ~/ 2);
+      }
+      expect(fixture.tasks.applied, isEmpty, reason: 'one save per burst');
+      await tester.pump(debounce);
+      expect(writes(fixture), <String>['11 notes Note']);
+
+      await tester.enterText(notes, 'Notes before Back');
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, isNull);
+      expect(writes(fixture), <String>[
+        '11 notes Note',
+        '11 notes Notes before Back',
+      ]);
+    });
+
+    testWidgets('opening a subtask stores the parent edit for the parent', (
+      tester,
+    ) async {
+      final fixture = await openPhoneDetail(tester);
+      await tester.tap(title);
+      await tester.enterText(title, 'Parent while switching');
+      await tester.pump();
+      final child = find.text('Cached child');
+      await tester.ensureVisible(child);
+      await tester.tap(child);
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(12));
+      expect(find.widgetWithText(TextField, 'Cached child'), findsOneWidget);
+      expect(writes(fixture), <String>['11 title Parent while switching']);
+
+      await tester.tap(title);
+      await tester.enterText(title, 'Child renamed');
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(11));
+      expect(writes(fixture), <String>[
+        '11 title Parent while switching',
+        '12 title Child renamed',
+      ]);
+    });
+
+    testWidgets('a failed save keeps the text and offers Retry', (
+      tester,
+    ) async {
+      final fixture = await openPhoneDetail(tester);
+      fixture.tasks.applyResult = Future.value(
+        const Outcome<void>.failure(
+          Failure(
+            code: 'task.persistence_failed',
+            category: FailureCategory.persistence,
+            operation: FailureOperation.write,
+            retry: RetryClassification.transient,
+            impact: 'The task was not saved.',
+            safeSummary: 'Synthetic persistence failure.',
+          ),
+        ),
+      );
+      await tester.tap(notes);
+      await tester.enterText(notes, 'Must not be lost');
+      await tester.pump(debounce);
+      await tester.pump();
+      expect(
+        find.text(
+          'Not saved: The task could not be saved safely. '
+          'Your text is kept here.',
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.widgetWithText(TextField, 'Must not be lost'),
+        findsOneWidget,
+      );
+
+      // Leaving and returning still shows the unsaved text.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pumpAndSettle();
+      expect(
+        find.widgetWithText(TextField, 'Must not be lost'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('task-content-save-failure')),
+        findsOneWidget,
+      );
+
+      fixture.tasks.applyResult = Future.value(
+        const Outcome<void>.success(null),
+      );
+      await tester.ensureVisible(
+        find.byKey(const Key('task-content-save-retry')),
+      );
+      await tester.tap(find.byKey(const Key('task-content-save-retry')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('task-content-save-failure')), findsNothing);
+      expect(writes(fixture).last, '11 notes Must not be lost');
+    });
+
+    testWidgets('an empty title is rejected and the notes still save', (
+      tester,
+    ) async {
+      final fixture = await openPhoneDetail(tester);
+      await tester.tap(title);
+      await tester.enterText(title, '');
+      await tester.pump();
+      expect(
+        find.text('Enter a title. The saved title stays until you do.'),
+        findsOneWidget,
+      );
+      await tester.tap(notes);
+      await tester.enterText(notes, 'Notes kept');
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pumpAndSettle();
+      expect(writes(fixture), <String>['11 notes Notes kept']);
+
+      // Leaving keeps the stored title; the next visit shows it again.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cached parent'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, 'Cached parent'), findsOneWidget);
+      expect(writes(fixture), <String>['11 notes Notes kept']);
+    });
+
+    testWidgets('keyboard composition defers saving until it commits', (
+      tester,
+    ) async {
+      final fixture = await openPhoneDetail(tester);
+      await tester.tap(notes);
+      await tester.enterText(notes, 'Draft ');
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'Draft かな',
+          selection: TextSelection.collapsed(offset: 8),
+          composing: TextRange(start: 6, end: 8),
+        ),
+      );
+      await tester.pump(debounce * 3);
+      expect(fixture.tasks.applied, isEmpty, reason: 'composition is open');
+
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'Draft 仮名',
+          selection: TextSelection.collapsed(offset: 8),
+        ),
+      );
+      await tester.pump(debounce);
+      expect(writes(fixture), <String>['11 notes Draft 仮名']);
+
+      // Leaving mid-composition stores the text the field shows.
+      tester.testTextInput.updateEditingValue(
+        const TextEditingValue(
+          text: 'Draft 仮名 x',
+          selection: TextSelection.collapsed(offset: 10),
+          composing: TextRange(start: 9, end: 10),
+        ),
+      );
+      await tester.pump();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(writes(fixture), <String>[
+        '11 notes Draft 仮名',
+        '11 notes Draft 仮名 x',
+      ]);
+    });
+
+    testWidgets('backgrounding the app stores a pending edit', (tester) async {
+      final fixture = await openPhoneDetail(tester);
+      await tester.tap(notes);
+      await tester.enterText(notes, 'Saved on pause');
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      expect(writes(fixture), <String>['11 notes Saved on pause']);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+    });
   });
 
   testWidgets('task content editor keeps text inert until one valid save', (

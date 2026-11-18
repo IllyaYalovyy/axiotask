@@ -998,6 +998,32 @@ range and weekday offsets). Run those two host files with `TZ` set to
 whose local midnight does not exist. The repository cascade and Undo across
 month, year and leap-day boundaries is in
 `test/data/database/due_cascade_repository_test.dart`.
+Case 11 (direct editing in details) is corrected by the same file. It
+keeps the audit's assertion that details contain text fields, then edits by
+touch: the title is stored when focus moves to the notes, multiline notes on
+Android Back, the parent's title when a subtask opens mid-edit, and rapid
+subtask notes once the fixture clock passes the typing debounce. Each value
+is read back from SQLite with an unchanged status and due date and a pending
+publication intent, and reopening the task shows it. An empty title shows
+its guidance, never reaches the store or the intent, and does not stop the
+notes from saving. Baseline case 12 now types into the Create subtask
+dialog's own field, since the inline fields stay beneath the dialog.
+Host coverage: `test/features/tasks/task_content_autosave_test.dart`
+(debounce, serialized writes that never let an older write overwrite newer
+text, per-task drafts across switches, failures, retry, throwing writers,
+empty titles, keyboard composition, disposal, deleted tasks, stale
+snapshots and the explicit dialog), the real-SQLite
+`test/features/tasks/task_content_autosave_repository_test.dart` (rapid
+typing, task switch and Back across a database reopen, injected
+transaction failures and retry, empty titles, completion during a pending
+save), and the inline detail editing group of
+`test/features/tasks/adaptive_shell_test.dart` (blur, debounce, Back,
+subtask switch, failure with Retry, empty title, composition, app
+backgrounding). Viewing a task changes nothing: an untouched stored title
+that is padded or blank is neither an error nor rewritten (titles are
+written trimmed, so surrounding whitespace alone is no edit), which the
+autosave, real-SQLite (no intent, no sync wake-up after a reopen) and shell
+tests pin down.
 The manifest records the SHA-256 of every imported audit file. Its fixtures are
 committed, so running them never needs the audit folder.
 

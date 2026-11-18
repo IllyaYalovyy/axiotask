@@ -9,6 +9,7 @@ import '../../../domain/policy/effective_due.dart';
 import '../../../domain/policy/subtask_progress.dart';
 import '../../../domain/policy/task_links.dart';
 import '../task_detail_view_model.dart';
+import 'task_content_editor.dart';
 import 'task_date_calendar.dart';
 import 'task_swipe.dart';
 
@@ -57,6 +58,30 @@ final class TaskDetailsPane extends StatelessWidget {
         .where((candidate) => candidate.id != task.parentTaskId)
         .toList(growable: false);
     final siblingIndex = state.siblingIndex;
+    return TaskContentEditor(
+      // One editor per task: switching tasks disposes the previous editor,
+      // which stores its text for that task only.
+      key: ValueKey<TaskId>(task.id),
+      viewModel: viewModel,
+      task: task,
+      builder: (context, content) => _buildDetails(
+        context,
+        state,
+        content,
+        alternateParents,
+        siblingIndex,
+      ),
+    );
+  }
+
+  Widget _buildDetails(
+    BuildContext context,
+    TaskDetailState state,
+    TaskContentFields content,
+    List<CachedTask> alternateParents,
+    int siblingIndex,
+  ) {
+    final task = state.task;
     return FocusTraversalGroup(
       child: SingleChildScrollView(
         key: const Key('task-detail-scroll-view'),
@@ -82,17 +107,7 @@ final class TaskDetailsPane extends StatelessWidget {
                     onPressed: viewModel.back,
                     icon: const Icon(Icons.arrow_back),
                   ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      task.title,
-                      key: const Key('task-detail-title'),
-                      style: Theme.of(context).textTheme.titleLarge
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
+                Expanded(child: content.title),
                 IconButton(
                   autofocus: !compact && state.parent == null,
                   tooltip: 'Close details',
@@ -201,10 +216,7 @@ final class TaskDetailsPane extends StatelessWidget {
                 ],
               ),
             ],
-            _InspectorSection(
-              title: 'Notes',
-              child: TaskNotesSection(notes: task.notes),
-            ),
+            _InspectorSection(title: 'Notes', child: content.notes),
             _InspectorSection(
               title: 'Google Tasks',
               child: TaskLinksSection(task: task, viewModel: viewModel),
@@ -554,35 +566,6 @@ String _displayLink(Uri uri) => uri.hasQuery || uri.hasFragment
           '${uri.hasFragment ? '#${uri.fragment}' : ''}'
     : '${uri.host}${uri.path}';
 
-final class TaskNotesSection extends StatelessWidget {
-  const TaskNotesSection({required this.notes, super.key});
-
-  final String? notes;
-
-  @override
-  Widget build(BuildContext context) {
-    final value = notes;
-    return Semantics(
-      container: true,
-      label: switch (value) {
-        null => 'Notes. No notes',
-        '' => 'Notes. Empty notes',
-        _ => 'Task notes',
-      },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          SelectableText(switch (value) {
-            null => 'No notes',
-            '' => 'Empty notes',
-            _ => value,
-          }, key: const Key('task-notes-content')),
-        ],
-      ),
-    );
-  }
-}
-
 final class _DateShortcutMenu extends StatelessWidget {
   const _DateShortcutMenu({
     required this.enabled,
@@ -856,9 +839,19 @@ final class _TaskContentDialog extends StatefulWidget {
 }
 
 final class _TaskContentDialogState extends State<_TaskContentDialog> {
-  late final _title = TextEditingController(text: widget.task.title);
-  late final _notes = TextEditingController(text: widget.task.notes ?? '');
-  late bool _clearNotes = widget.task.notes == null;
+  // Unsaved inline text (for example after a failed autosave) is what the
+  // user last typed, so the dialog starts from it rather than from the store.
+  late final _draft = widget.viewModel.contentAutosave.draft(widget.task.id);
+  late final _title = TextEditingController(
+    text: _draft?.title ?? widget.task.title,
+  );
+  late final _notes = TextEditingController(
+    text: _draft?.notes ?? widget.task.notes ?? '',
+  );
+  late bool _clearNotes = switch (_draft) {
+    null => widget.task.notes == null,
+    final draft => draft.notes.isEmpty && widget.task.notes != '',
+  };
 
   @override
   void dispose() {

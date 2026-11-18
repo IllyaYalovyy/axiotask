@@ -167,6 +167,23 @@ are grouped in Organization, while hierarchy changes and deletion remain in
 labeled menus with the existing task-delete Undo contract. Every control stays
 reachable by scrolling at the inspector's minimum supported width and height.
 
+Title and notes are edited in place, on phones and desktop alike, as in
+v1.5.3; the Edit task dialog remains an explicit alternative. There is no
+Save button: the text is stored once typing pauses (about 0.75 s), and
+immediately when a field loses focus, on Back, on opening another task or
+leaving the details, and when the app leaves the foreground. While a keyboard
+composition is open the pause does not store the half-composed text; leaving
+stores what the field shows. The notes field states whether changes are
+unsaved, saving or stored automatically. An empty title is not stored: the
+field explains that the saved title stays, the notes still save, and leaving
+shows the saved title again. When a save fails the field keeps the text, says
+it was not saved and why, and offers Retry; leaving and returning to the task
+shows the same unsaved text until a retry stores it. Edits are kept per task,
+so text typed for one task is never stored on another, and a slower earlier
+save can never overwrite newer text. The policy lives in the shared
+`TaskContentAutosave` service owned by the tasks view model; widgets never
+write the database.
+
 On desktop the custom-date route is a typed `YYYY-MM-DD` date. Touch
 platforms (Android phones and tablets) restore the v1.5.3 calendar instead,
 from both Change due date → Choose date and the swipe scheduling sheet. It

@@ -75,7 +75,15 @@ void main() {
     await t.ensureVisible(find.text('Add subtask'));
     await t.tap(find.text('Add subtask'));
     await t.pumpAndSettle();
-    await t.enterText(find.byType(TextField), 'Created child');
+    // The dialog's field: the details beneath keep their inline title and
+    // notes fields (case 11).
+    await t.enterText(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.byType(TextField),
+      ),
+      'Created child',
+    );
     await t.tap(find.widgetWithText(FilledButton, 'Create'));
     await settleUntil(
       t,
