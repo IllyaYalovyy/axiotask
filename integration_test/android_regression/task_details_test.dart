@@ -590,6 +590,7 @@ void main() {
     await t.tap(find.text('Audit child'));
     await t.pumpAndSettle();
     expect(f.model.state.selectedTaskId, f.child);
+    expect(find.text('Subtasks'), findsNothing);
     await _openTaskActions(t);
     expect(
       find.textContaining('Duplicate').hitTestable(),

@@ -455,34 +455,37 @@ final class TaskDetailsPane extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 8),
-                _InspectorSection(
-                  title: 'Subtasks',
-                  trailing: state.canCreateSubtask
-                      ? TextButton.icon(
-                          onPressed: state.isCommandPending
-                              ? null
-                              : () => _showCreateSubtaskDialog(
-                                  context,
-                                  viewModel,
-                                ),
-                          icon: const Icon(Icons.add, size: 20),
-                          label: const Text('Add subtask'),
-                        )
-                      : null,
-                  child: state.children.isEmpty
-                      ? const SizedBox.shrink()
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            SubtaskProgressIndicator(progress: state.progress),
-                            const SizedBox(height: 8),
-                            SubtaskList(
-                              viewModel: viewModel,
-                              children: state.children,
-                            ),
-                          ],
-                        ),
-                ),
+                if (state.canCreateSubtask || state.children.isNotEmpty)
+                  _InspectorSection(
+                    title: 'Subtasks',
+                    trailing: state.canCreateSubtask
+                        ? TextButton.icon(
+                            onPressed: state.isCommandPending
+                                ? null
+                                : () => _showCreateSubtaskDialog(
+                                    context,
+                                    viewModel,
+                                  ),
+                            icon: const Icon(Icons.add, size: 20),
+                            label: const Text('Add subtask'),
+                          )
+                        : null,
+                    child: state.children.isEmpty
+                        ? const SizedBox.shrink()
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              SubtaskProgressIndicator(
+                                progress: state.progress,
+                              ),
+                              const SizedBox(height: 8),
+                              SubtaskList(
+                                viewModel: viewModel,
+                                children: state.children,
+                              ),
+                            ],
+                          ),
+                  ),
                 const SizedBox(height: 16),
                 ExpansionTile(
                   tilePadding: const EdgeInsets.symmetric(horizontal: 12),
