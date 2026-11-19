@@ -1,0 +1,12 @@
+// Flutter's included Gradle build has its own plugin repositories. Resolve
+// Kotlin libraries from Maven Central directly: the Plugin Portal's redirect
+// intermittently reported those existing artifacts as missing on CI runners.
+gradle.beforeSettings { settings ->
+    if (settings.settingsDir.name == 'gradle' &&
+        settings.settingsDir.parentFile.name == 'flutter_tools') {
+        settings.pluginManagement.repositories {
+            mavenCentral()
+            gradlePluginPortal()
+        }
+    }
+}

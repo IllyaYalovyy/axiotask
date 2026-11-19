@@ -3123,23 +3123,35 @@ void main() {
         find.descendant(of: dialog, matching: find.text('Edit task')),
         findsOneWidget,
       );
-      await tester.enterText(
-        find.descendant(
-          of: dialog,
-          matching: find.byWidgetPredicate(
-            (widget) =>
-                widget is TextField &&
-                widget.decoration?.labelText == 'Task title',
-          ),
+      // A native keyboard can leave only half the landscape viewport.
+      // The title must scroll with the fields so Save stays reachable.
+      tester.view
+        ..viewInsets = const FakeViewPadding(bottom: 180)
+        ..padding = const FakeViewPadding(top: 24);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final editTitle = find.descendant(
+        of: dialog,
+        matching: find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField &&
+              widget.decoration?.labelText == 'Task title',
         ),
-        'Edited parent',
       );
-      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await tester.ensureVisible(editTitle);
+      await tester.pumpAndSettle();
+      expect(editTitle.hitTestable(), findsOneWidget);
+      await tester.enterText(editTitle, 'Edited parent');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save').hitTestable());
       await tester.pumpAndSettle();
       final edit = fixture.tasks.applied.single as UpdateTaskContentCommand;
       expect(edit.taskId, const TaskId(11));
       expect(edit.title, 'Edited parent');
 
+      tester.view.resetViewInsets();
+      tester.view.padding = const FakeViewPadding(top: 24, bottom: 48);
+      await tester.pumpAndSettle();
       await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
       await tester.tap(_rowOverflow(11, 'Cached parent'));

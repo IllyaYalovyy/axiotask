@@ -18,6 +18,10 @@ Startup/sync feedback occupies at most 40% of a phone's available shell
 height and scrolls to its actions, leaving room for the task collection.
 Completion and deletion Undo appear at the bottom, above navigation and the
 gesture inset, so acting on a row does not shift the remaining rows downward.
+Undo yields during capture and selection, while its original window remains
+valid. Routine bulk sync counts use the compact sync status on phones; bulk
+failures still show their detailed feedback. This keeps short screens usable
+while completing several actions in sequence.
 Composer fields retain their input connection through short keyboard/rotation
 frames. Outcome tests cover persistence and Undo; viewport/text-scale screenshots
 supplement them. See [Testing](TESTING.md#android-takeover-qualification).

@@ -1408,6 +1408,13 @@ final class _TaskContentDialogState extends State<_TaskContentDialog> {
     animation: widget.viewModel,
     builder: (context, _) => AlertDialog(
       title: const Text('Edit task'),
+      scrollable: true,
+      insetPadding: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
+          : null,
+      actionsPadding: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? const EdgeInsets.fromLTRB(16, 0, 16, 8)
+          : null,
       content: SizedBox(
         width: 480,
         child: SingleChildScrollView(

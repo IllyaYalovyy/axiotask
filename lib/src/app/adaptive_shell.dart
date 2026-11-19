@@ -807,7 +807,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                                       ],
                                     ),
                                   if (state.latestBulkOperation
-                                      case final summary?)
+                                      case final summary?
+                                      when !_phoneComposerMode ||
+                                          summary.failedCount > 0)
                                     _BulkOperationResultBanner(
                                       summary: summary,
                                     ),
@@ -1051,7 +1053,9 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                   child: child,
                 ),
               ),
-              if (_phoneComposerMode && !_navigation.state.composerOpen)
+              if (_phoneComposerMode &&
+                  !_navigation.state.composerOpen &&
+                  !state.isBulkSelectionActive)
                 _PhoneUndoFeedback(state: state, viewModel: widget.viewModel),
               if (showBar) bar,
             ],
