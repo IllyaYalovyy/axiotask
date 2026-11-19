@@ -2052,7 +2052,7 @@ void main() {
       expect(
         find.bySemanticsLabel(
           'Drag Leaf task to reorder or move. '
-          'Move buttons are available in task details.',
+          'Move up and Move down are in the task actions menu.',
         ),
         findsOneWidget,
       );
@@ -3922,6 +3922,22 @@ void main() {
       expect(command.previousTaskId, isNull);
       expect(fixture.viewModel.state.isBulkSelectionActive, isFalse);
       expect(fixture.tasks.dueChanges, isEmpty);
+    });
+
+    testWidgets('35 row menu steps a task through the shared move command', (
+      tester,
+    ) async {
+      final fixture = await _pumpPhoneShell(tester, viewport, clock: clock);
+      await tester.tap(_rowOverflow(13, 'Leaf task'));
+      await tester.pumpAndSettle();
+      expect(find.text('Move up'), findsOneWidget);
+      expect(find.text('Move down'), findsOneWidget);
+      await tester.tap(find.text('Move up'));
+      await tester.pumpAndSettle();
+      final command = fixture.tasks.applied.single as MoveTaskCommand;
+      expect(command.taskId, const TaskId(13));
+      expect(command.parentTaskId, isNull);
+      expect(command.previousTaskId, isNull);
     });
 
     Future<void> chooseFromSheet(WidgetTester tester, String label) async {

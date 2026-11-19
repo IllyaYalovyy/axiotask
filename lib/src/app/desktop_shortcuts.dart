@@ -23,6 +23,8 @@ enum DesktopTaskAction {
   edit,
   chooseDate,
   moveToList,
+  moveUp,
+  moveDown,
   delete,
 }
 

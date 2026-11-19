@@ -642,6 +642,8 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
           );
         case DesktopTaskAction.open ||
             DesktopTaskAction.toggleCompletion ||
+            DesktopTaskAction.moveUp ||
+            DesktopTaskAction.moveDown ||
             DesktopTaskAction.delete:
           return;
       }
@@ -3221,6 +3223,9 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                                 parentTaskId: task.id,
                                 tasks: state.tasks,
                               );
+                              bool sibling(CachedTask other) =>
+                                  other.taskListId == task.taskListId &&
+                                  other.parentTaskId == task.parentTaskId;
                               final taskRow = _DesktopTaskRow(
                                 key: Key('desktop-task-row-${task.id.value}'),
                                 focusNode: _rowFocusNodes[index],
@@ -3230,6 +3235,16 @@ final class _TaskCollectionState extends State<_TaskCollection> {
                                 onAction: (action) =>
                                     widget.onTaskAction(action, task.id),
                                 canonicalSiblings: canonicalSiblings,
+                                previousSibling: tasks
+                                    .take(index)
+                                    .toList(growable: false)
+                                    .reversed
+                                    .where(sibling)
+                                    .firstOrNull,
+                                nextSibling: tasks
+                                    .skip(index + 1)
+                                    .where(sibling)
+                                    .firstOrNull,
                                 manualOrderEnabled:
                                     state.selectedTaskListId ==
                                         task.taskListId &&
@@ -3355,6 +3370,8 @@ final class _DesktopTaskRow extends StatefulWidget {
     required this.onSwipeSchedule,
     required this.selected,
     required this.canonicalSiblings,
+    required this.previousSibling,
+    required this.nextSibling,
     required this.manualOrderEnabled,
     required this.dropPreview,
     required this.onDragStarted,
@@ -3389,6 +3406,11 @@ final class _DesktopTaskRow extends StatefulWidget {
   final VoidCallback onSwipeSchedule;
   final bool selected;
   final List<CachedTask> canonicalSiblings;
+
+  /// The nearest visible siblings above and below this row; "Move up" and
+  /// "Move down" reorder relative to them so each tap visibly moves the row.
+  final CachedTask? previousSibling;
+  final CachedTask? nextSibling;
   final bool manualOrderEnabled;
   final _DesktopDropPreview? dropPreview;
   final ValueChanged<DesktopTaskDragPayload> onDragStarted;
@@ -3444,6 +3466,42 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
     return KeyEventResult.ignored;
   }
 
+  DesktopTaskDropIntent? _stepIntent(DesktopTaskAction action) {
+    final up = action == DesktopTaskAction.moveUp;
+    final target = up ? widget.previousSibling : widget.nextSibling;
+    if (target == null) return null;
+    return DesktopTaskDragAdapter.reorder(
+      payload: DesktopTaskDragPayload.fromTask(widget.task),
+      target: target,
+      placement: up
+          ? DesktopTaskDropPlacement.before
+          : DesktopTaskDropPlacement.after,
+      canonicalSiblings: widget.canonicalSiblings,
+      manualOrderEnabled: widget.manualOrderEnabled,
+    );
+  }
+
+  void _runAction(DesktopTaskAction action) {
+    if (action == DesktopTaskAction.moveUp ||
+        action == DesktopTaskAction.moveDown) {
+      if (_stepIntent(action) case final intent?) widget.onDrop(intent);
+      return;
+    }
+    widget.onAction(action);
+  }
+
+  List<PopupMenuEntry<DesktopTaskAction>> _menuItems(CachedTask task) =>
+      _taskActionMenuItems(
+        task,
+        canMove: widget.canMove,
+        reorder: widget.manualOrderEnabled
+            ? (
+                up: _stepIntent(DesktopTaskAction.moveUp) != null,
+                down: _stepIntent(DesktopTaskAction.moveDown) != null,
+              )
+            : null,
+      );
+
   Future<void> _showContextMenu(Offset position) async {
     if (!widget.enabled) return;
     final overlay =
@@ -3455,9 +3513,9 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
         Offset.zero & overlay.size,
       ),
       constraints: _taskActionMenuConstraints,
-      items: _taskActionMenuItems(widget.task, canMove: widget.canMove),
+      items: _menuItems(widget.task),
     );
-    if (action != null) widget.onAction(action);
+    if (action != null) _runAction(action);
   }
 
   DesktopTaskDropPlacement _placement(Offset globalPosition) {
@@ -3598,9 +3656,8 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
                     padding: EdgeInsets.zero,
                     style: controlStyle,
                     constraints: _taskActionMenuConstraints,
-                    onSelected: widget.onAction,
-                    itemBuilder: (_) =>
-                        _taskActionMenuItems(task, canMove: widget.canMove),
+                    onSelected: _runAction,
+                    itemBuilder: (_) => _menuItems(task),
                   ),
                 ),
               ],
@@ -3740,7 +3797,7 @@ final class _DesktopTaskRowState extends State<_DesktopTaskRow> {
       explicitChildNodes: true,
       label:
           'Drag ${task.title} to reorder or move. '
-          'Move buttons are available in task details.',
+          'Move up and Move down are in the task actions menu.',
       child: _DesktopPointerDraggable<DesktopTaskDragPayload>(
         data: DesktopTaskDragPayload.fromTask(task),
         maxSimultaneousDrags: widget.enabled && !widget.selectionMode ? 1 : 0,
@@ -3987,9 +4044,12 @@ final class _DesktopDropPreview {
   int get hashCode => Object.hash(intent, label, targetKey);
 }
 
+/// [reorder] is non-null in My order, where the menu offers step-wise moves
+/// as a tap alternative to dragging; null hides them.
 List<PopupMenuEntry<DesktopTaskAction>> _taskActionMenuItems(
   CachedTask task, {
   required bool canMove,
+  ({bool up, bool down})? reorder,
 }) => <PopupMenuEntry<DesktopTaskAction>>[
   const PopupMenuItem(
     value: DesktopTaskAction.open,
@@ -4011,6 +4071,18 @@ List<PopupMenuEntry<DesktopTaskAction>> _taskActionMenuItems(
     enabled: canMove,
     child: const Text('Move to list…'),
   ),
+  if (reorder != null) ...<PopupMenuEntry<DesktopTaskAction>>[
+    PopupMenuItem(
+      value: DesktopTaskAction.moveUp,
+      enabled: reorder.up,
+      child: const Text('Move up'),
+    ),
+    PopupMenuItem(
+      value: DesktopTaskAction.moveDown,
+      enabled: reorder.down,
+      child: const Text('Move down'),
+    ),
+  ],
   const PopupMenuDivider(),
   const PopupMenuItem(
     value: DesktopTaskAction.delete,
