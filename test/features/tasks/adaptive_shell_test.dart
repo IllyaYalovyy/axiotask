@@ -480,8 +480,43 @@ void main() {
       await tester.pump();
 
       expect(find.text('First direct child'), findsOneWidget);
-      expect(find.text('Completed direct child'), findsOneWidget);
       expect(find.text('1 of 2 subtasks complete'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets(
+    'details hide completed subtasks by default and the toggle shows and hides them',
+    (tester) async {
+      tester.view.physicalSize = const Size(1280, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final fixture = _ShellFixture(
+        _health(SyncHealthOutcome.pending),
+        snapshot: _detailSnapshot,
+      );
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.widget);
+      await tester.pump();
+      await tester.tap(find.text('Long-note parent'));
+      await tester.pump();
+
+      final toggle = find.byKey(const Key('toggle-completed-subtasks'));
+      expect(find.text('First direct child'), findsOneWidget);
+      expect(find.text('Completed direct child'), findsNothing);
+      expect(find.text('Show 1 completed subtask'), findsOneWidget);
+
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump();
+      expect(find.text('Completed direct child'), findsOneWidget);
+      expect(find.text('Hide completed subtasks'), findsOneWidget);
+
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump();
+      expect(find.text('Completed direct child'), findsNothing);
+      expect(find.text('Show 1 completed subtask'), findsOneWidget);
     },
   );
 
@@ -558,6 +593,10 @@ void main() {
       await tester.pump();
       expect(fixture.tasks.applied.last, isA<PromoteTaskCommand>());
 
+      final toggle = find.byKey(const Key('toggle-completed-subtasks'));
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pump();
       await tester.ensureVisible(
         find.byTooltip('Manage Completed direct child'),
       );
@@ -4161,6 +4200,12 @@ void main() {
         ),
       );
       await _tapRowTitle(tester, 'Cached parent');
+      // Completed subtasks are hidden until the toggle reveals them.
+      final toggle = find.byKey(const Key('toggle-completed-subtasks'));
+      await tester.ensureVisible(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
       final child = find.byKey(const ValueKey<String>('subtask-12'));
       await tester.ensureVisible(child);
       await tester.pumpAndSettle();

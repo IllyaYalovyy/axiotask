@@ -260,16 +260,13 @@ final class TaskDetailsPane extends StatelessWidget {
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        SubtaskProgressIndicator(progress: state.progress),
-                        const SizedBox(height: 4),
-                        SubtaskList(
-                          viewModel: viewModel,
-                          children: state.children,
-                        ),
-                      ],
+                  : _SubtasksBody(
+                      // One toggle state per task: it resets to hidden when
+                      // another task is shown.
+                      key: ValueKey<TaskId>(task.id),
+                      viewModel: viewModel,
+                      progress: state.progress,
+                      children: state.children,
                     ),
             ),
             _InspectorSection(
@@ -674,6 +671,62 @@ final class _DateShortcutMenu extends StatelessWidget {
   );
 }
 
+/// The progress summary and subtask list of the details pane. Completed
+/// subtasks are hidden by default; a toggle shows and hides them again.
+final class _SubtasksBody extends StatefulWidget {
+  const _SubtasksBody({
+    required this.viewModel,
+    required this.progress,
+    required this.children,
+    super.key,
+  });
+
+  final TaskDetailViewModel viewModel;
+  final DirectChildProgress progress;
+  final List<CachedTask> children;
+
+  @override
+  State<_SubtasksBody> createState() => _SubtasksBodyState();
+}
+
+final class _SubtasksBodyState extends State<_SubtasksBody> {
+  bool _showCompleted = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final completedCount = widget.children
+        .where((child) => child.status == TaskStatus.completed)
+        .length;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        SubtaskProgressIndicator(progress: widget.progress),
+        if (completedCount > 0)
+          TextButton.icon(
+            key: const Key('toggle-completed-subtasks'),
+            onPressed: () => setState(() => _showCompleted = !_showCompleted),
+            icon: Icon(
+              _showCompleted ? Icons.visibility_off : Icons.visibility,
+              size: 18,
+            ),
+            label: Text(
+              _showCompleted
+                  ? 'Hide completed subtasks'
+                  : 'Show $completedCount completed '
+                        '${completedCount == 1 ? 'subtask' : 'subtasks'}',
+            ),
+          ),
+        const SizedBox(height: 4),
+        SubtaskList(
+          viewModel: widget.viewModel,
+          children: widget.children,
+          showCompleted: _showCompleted,
+        ),
+      ],
+    );
+  }
+}
+
 final class SubtaskProgressIndicator extends StatelessWidget {
   const SubtaskProgressIndicator({required this.progress, super.key});
 
@@ -700,26 +753,34 @@ final class SubtaskList extends StatelessWidget {
   const SubtaskList({
     required this.viewModel,
     required this.children,
+    this.showCompleted = true,
     super.key,
   });
 
   final TaskDetailViewModel viewModel;
+
+  /// All direct children in stored order, including hidden completed ones, so
+  /// a subtask's position and reorder options do not depend on what is shown.
   final List<CachedTask> children;
+
+  /// Whether completed subtasks are listed.
+  final bool showCompleted;
 
   @override
   Widget build(BuildContext context) => Column(
     children: <Widget>[
       for (final (index, child) in children.indexed)
-        TaskSwipeActions(
-          key: ValueKey<String>('subtask-${child.id.value}'),
-          enabled: viewModel.state?.isCommandPending != true,
-          onComplete: child.status == TaskStatus.completed
-              ? null
-              : () => unawaited(viewModel.complete(child.id)),
-          onSchedule: () =>
-              unawaited(scheduleTaskFromSwipe(context, viewModel, child)),
-          child: _reorderableSubtask(context, index, child),
-        ),
+        if (showCompleted || child.status != TaskStatus.completed)
+          TaskSwipeActions(
+            key: ValueKey<String>('subtask-${child.id.value}'),
+            enabled: viewModel.state?.isCommandPending != true,
+            onComplete: child.status == TaskStatus.completed
+                ? null
+                : () => unawaited(viewModel.complete(child.id)),
+            onSchedule: () =>
+                unawaited(scheduleTaskFromSwipe(context, viewModel, child)),
+            child: _reorderableSubtask(context, index, child),
+          ),
     ],
   );
 
