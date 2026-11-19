@@ -1,10 +1,11 @@
-Restores Android Google sign-in, synchronization, and the original Axiotask icon.
+Refines Android task screens and touch behavior.
 
-- Connect using native Google Play Services authorization; restore the connection after reopening the app.
-- Accept valid Gmail task links containing URL fragments when parsing, storing, and displaying tasks.
-- Restore authorization after an exhausted retry episode, and let Refresh explicitly retry synchronization.
-- Keep routine background verification compact, and show clearer failure explanations with a diagnostic reference.
-- Restore the purple Axiotask launcher icon, including adaptive, round, and themed variants.
+- Use consistent app bars, cleaner task details, and contextual task actions.
+- Create tasks in a keyboard-aware sheet; Save closes it after successful persistence.
+- Use predictable Back behavior for menus, search, details, and reorder mode.
+- Keep completion and deletion Undo near the bottom without shifting task rows.
+- Keep controls reachable in landscape and with large text, including bulk selection and editing.
+- Improve Android regression coverage and CI dependency resolution.
 
 Android signing: this release uses the historical OAuth-registered certificate
 (SHA-1 `92:0A:4B:DD:8D:D9:C4:83:08:F5:6F:5A:6B:AB:8B:5E:36:A3:AC:72`).

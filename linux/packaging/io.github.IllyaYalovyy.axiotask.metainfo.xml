@@ -26,6 +26,10 @@
   <provides><binary>axiotask</binary></provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.5.7" type="stable" date="2026-11-18">
+      <description><p>Refine Android navigation, task capture and details,
+      with predictable Back behavior and accessible keyboard and landscape layouts.</p></description>
+    </release>
     <release version="1.5.6" type="stable" date="2026-11-15">
       <description><p>Restore Android Google authorization and launcher branding,
       accept Gmail task links, and recover synchronization after exhausted retries.</p></description>
