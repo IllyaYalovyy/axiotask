@@ -182,8 +182,11 @@ row plus a before/after insertion marker without moving the canonical rows until
 the shared structure command commits. Dropping on another Google list uses the
 same stable-ID move command. Sorted, same-position, smart-view, and other invalid
 targets do not commit; cancel or failure removes the preview and exposes the
-canonical projection. Detail Move up/down and Move to list controls remain the
-focusable non-pointer equivalents.
+canonical projection. On touch, a drag handle on each row (long press, then
+drag) reorders in My order; the row's actions menu also offers Move up and Move
+down, which step the task past its nearest visible sibling through the same
+command. Detail Move up/down and Move to list controls remain the focusable
+non-pointer equivalents.
 
 Collection headers use two distinct command modes. Normal mode keeps the
 collection title, a compact visible sort/order control, Select, and one labeled
