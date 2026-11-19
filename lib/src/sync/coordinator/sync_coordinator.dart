@@ -451,17 +451,23 @@ final class SyncCoordinator
 
   Future<void> resume() => _changeSyncEnabled(true);
 
+  /// Schedules publication of a durable local edit.
+  ///
+  /// The returned future completes once the wake-up is accepted, never after
+  /// the synchronization it schedules: local commands await it and must not
+  /// stay pending (and keep the UI disabled) while Google is contacted. Await
+  /// [whenIdle] to observe the resulting run.
   Future<void> localEditCommitted() {
     _requireOpen();
     if (_syncEnabled != true || _stopRequested || _shutdownRequested) {
-      return whenIdle;
+      return Future<void>.value();
     }
     if (_activeControl != null) {
       _followUpTriggers.add(SyncTrigger.localEdit);
       _emit(
         _with(activity: SyncActivity.verifying, verificationRequired: true),
       );
-      return whenIdle;
+      return Future<void>.value();
     }
 
     final now = clock.monotonicElapsed;
@@ -480,7 +486,7 @@ final class SyncCoordinator
     _emit(
       _with(activity: SyncActivity.debouncing, verificationRequired: false),
     );
-    return whenIdle;
+    return Future<void>.value();
   }
 
   Future<void> taskDeleteCommitted(DateTime notBefore) async {

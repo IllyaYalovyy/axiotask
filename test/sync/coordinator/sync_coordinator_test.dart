@@ -94,6 +94,56 @@ void main() {
   );
 
   test(
+    'local edit wake-up never waits for the synchronization it schedules',
+    () async {
+      final harness = _Harness(startedAt: startedAt);
+      addTearDown(harness.close);
+
+      final startup = harness.coordinator.start();
+      await harness.runner.waitForRuns(1);
+      expect(harness.runner.activeRuns, 1);
+
+      // While a run is talking to Google, a local command's wake-up must
+      // complete so the command (and the UI it disables) is released.
+      var acceptedDuringRun = false;
+      unawaited(
+        harness.coordinator.localEditCommitted().then((_) {
+          acceptedDuringRun = true;
+        }),
+      );
+      await _flushMicrotasks();
+      expect(acceptedDuringRun, isTrue);
+      expect(harness.runner.activeRuns, 1);
+
+      harness.runner.complete(0);
+      await harness.runner.waitForRuns(2);
+      harness.runner.complete(1);
+      await startup;
+      await harness.coordinator.whenIdle;
+      harness.runner.clearCompleted();
+
+      // During the debounce no run exists yet; the wake-up is still immediate.
+      var acceptedWhileDebouncing = false;
+      unawaited(
+        harness.coordinator.localEditCommitted().then((_) {
+          acceptedWhileDebouncing = true;
+        }),
+      );
+      await _flushMicrotasks();
+      expect(acceptedWhileDebouncing, isTrue);
+      expect(harness.runner.invocations, isEmpty);
+
+      harness.clock.advance(const Duration(seconds: 5));
+      await harness.runner.waitForRuns(1);
+      expect(harness.runner.invocations.single.triggers, <SyncTrigger>{
+        SyncTrigger.localEdit,
+      });
+      harness.runner.complete(0);
+      await harness.coordinator.whenIdle;
+    },
+  );
+
+  test(
     'RUN-003 local edit debounce is trailing 5 seconds capped at 10',
     () async {
       final harness = _Harness(startedAt: startedAt, autoComplete: true);

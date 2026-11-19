@@ -3,18 +3,24 @@ import 'dart:async';
 import 'package:axiotask/src/core/diagnostics/diagnostics.dart';
 import 'package:axiotask/src/core/failure.dart';
 import 'package:axiotask/src/core/outcome.dart';
+import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/domain/commands/task_commands.dart';
 import 'package:axiotask/src/domain/commands/task_list_commands.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
 import 'package:axiotask/src/domain/policy/smart_views.dart';
+import 'package:axiotask/src/domain/repository/sync_settings_repository.dart';
 import 'package:axiotask/src/domain/repository/task_lists_repository.dart';
 import 'package:axiotask/src/domain/repository/tasks_repository.dart';
 import 'package:axiotask/src/features/tasks/tasks_view_model.dart';
+import 'package:axiotask/src/sync/coordinator/sync_coordinator.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:axiotask/src/sync/health/sync_health_repository.dart';
+import 'package:axiotask/src/sync/retry/retry_episode.dart';
+import 'package:axiotask/src/sync/run.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../support/fake_clock.dart';
+import '../../support/fake_random.dart';
 
 void main() {
   test(
@@ -440,6 +446,69 @@ void main() {
   );
 
   test(
+    'local edits stay usable while the synchronization they wake is running',
+    () async {
+      final clock = FakeClock(DateTime.utc(2026, 8, 15, 12));
+      final runs = <Completer<SyncRunReport>>[];
+      final coordinator = SyncCoordinator(
+        accountId: const AccountId(1),
+        authorization: const SyntheticAuthorization(
+          AccountSubject('synthetic-view-model-subject'),
+        ),
+        clock: clock,
+        scheduler: clock,
+        random: FakeRandom.seeded(7),
+        settings: _EnabledSyncSettings(),
+        retryStore: _NoRetryStore(),
+        reauthorizationStore: _NoReauthorizationStore(),
+        run: (_) {
+          final report = Completer<SyncRunReport>();
+          runs.add(report);
+          return report.future;
+        },
+      );
+      final tasks = _TasksRepository();
+      final viewModel = TasksViewModel(
+        accountId: const AccountId(1),
+        tasksRepository: tasks,
+        syncHealthRepository: _HealthRepository(),
+        localEditCommitted: coordinator.localEditCommitted,
+      );
+      addTearDown(() async {
+        viewModel.dispose();
+        for (final run in runs) {
+          if (!run.isCompleted) run.complete(_syntheticRunReport);
+        }
+        await coordinator.close();
+      });
+
+      unawaited(coordinator.start());
+      await pumpEventQueue();
+      expect(runs, hasLength(1), reason: 'a sync run is talking to Google');
+
+      // Neither the edit nor its successor may wait for that run: a pending
+      // command disables every task row and drops further user commands.
+      await viewModel
+          .setTaskCompletion(const TaskId(11), TaskStatus.completed)
+          .timeout(const Duration(seconds: 1));
+      expect(viewModel.state.isTaskCommandPending, isFalse);
+      await viewModel
+          .setTaskCompletion(const TaskId(12), TaskStatus.completed)
+          .timeout(const Duration(seconds: 1));
+      expect(viewModel.state.isTaskCommandPending, isFalse);
+      expect(tasks.applied.map((command) => command.taskId), <TaskId>[
+        const TaskId(11),
+        const TaskId(12),
+      ]);
+      expect(runs.single.isCompleted, isFalse);
+
+      runs.single.complete(_syntheticRunReport);
+      await pumpEventQueue();
+      expect(runs, hasLength(2), reason: 'the edits publish in a follow-up');
+    },
+  );
+
+  test(
     'task persistence failure is visible and never schedules sync',
     () async {
       final tasks = _TasksRepository()
@@ -727,3 +796,51 @@ final _pending = SyncHealth(
   lastSuccessfulSyncAt: null,
   evaluatedAt: DateTime.utc(2026, 8, 15, 12),
 );
+
+const _syntheticRunReport = SyncRunReport(
+  outcome: SyncRunOutcome.succeeded,
+  runId: SyncRunId('synthetic-view-model-run'),
+  complete: true,
+  taskListPages: 1,
+  taskPages: 0,
+  remoteTaskLists: 0,
+  remoteTasks: 0,
+  resourceProjectionWrites: 0,
+);
+
+final class _EnabledSyncSettings implements SyncSettingsRepository {
+  @override
+  Future<bool> readSyncEnabled(AccountId accountId) async => true;
+
+  @override
+  Future<void> setSyncEnabled(AccountId accountId, bool enabled) async {}
+}
+
+final class _NoRetryStore implements SyncRetryEpisodeStore {
+  @override
+  Future<RetryEpisode?> readRetryEpisode(AccountId accountId) async => null;
+
+  @override
+  Future<void> writeRetryEpisode(
+    AccountId accountId,
+    RetryEpisode episode,
+  ) async {}
+
+  @override
+  Future<void> clearRetryEpisode(AccountId accountId) async {}
+}
+
+final class _NoReauthorizationStore implements SyncReauthorizationStore {
+  @override
+  Future<bool> readReauthorizationRequired(AccountId accountId) async => false;
+
+  @override
+  Future<String?> readAuthorizationSubject(AccountId accountId) async =>
+      'synthetic-view-model-subject';
+
+  @override
+  Future<void> requireReauthorization(AccountId accountId) async {}
+
+  @override
+  Future<void> completeReauthorization(AccountId accountId) async {}
+}
