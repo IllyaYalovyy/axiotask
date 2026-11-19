@@ -262,6 +262,56 @@ void main() {
     },
   );
 
+  test(
+    'first sidebar reorder immediately updates an existing subscription',
+    () async {
+      final database = AppDatabase.inMemory();
+      addTearDown(database.close);
+      final cache = CacheDao(database);
+      final account = AccountId(await database.createAccount('first-reorder'));
+      final first = await cache.putTaskList(
+        accountId: account,
+        remoteId: const TaskListRemoteId('first'),
+        title: 'First',
+      );
+      final second = await cache.putTaskList(
+        accountId: account,
+        remoteId: const TaskListRemoteId('second'),
+        title: 'Second',
+      );
+      final preferences = DriftRelationalPreferences(database);
+      final values = StreamIterator(
+        preferences.watchAllListPreferences(account),
+      );
+      addTearDown(values.cancel);
+      expect(await values.moveNext(), isTrue);
+      expect(
+        values.current.values.map((p) => p.sidebarOrder),
+        everyElement(equals(null)),
+      );
+      expect(
+        await preferences.setSidebarOrder(account, [second, first]),
+        isA<Success<void>>(),
+      );
+      expect(
+        await values.moveNext().timeout(const Duration(seconds: 2)),
+        isTrue,
+      );
+      expect(values.current[second]!.sidebarOrder, 0);
+      expect(values.current[first]!.sidebarOrder, 1);
+      expect(
+        await preferences.setSidebarOrder(account, [first, second]),
+        isA<Success<void>>(),
+      );
+      expect(
+        await values.moveNext().timeout(const Duration(seconds: 2)),
+        isTrue,
+      );
+      expect(values.current[first]!.sidebarOrder, 0);
+      expect(values.current[second]!.sidebarOrder, 1);
+    },
+  );
+
   test('all view preferences react without inventing missing rows', () async {
     final database = AppDatabase.inMemory();
     addTearDown(database.close);

@@ -5,13 +5,23 @@
 The v1.5.3 behavior basis and November 15 regression audit are maintained as
 36 numbered flows plus four findings in the Android regression manifest.
 Task-row long press selects, horizontal swipes complete or schedule, and the
-48 dp drag handle reorders siblings in manual-order phone layouts. Non-manual
-sorts omit the handle; row gestures retain their separate meanings. Pulling
+48 dp drag handle reorders siblings after Collection actions → Reorder tasks
+in manual-order phone layouts. Done or system Back hides the handles;
+non-manual sorts omit that action. Subtasks in details reorder by holding and
+dragging the row, with Move up/down available in each row's menu. Ordinary
+rows keep completion, content and one overflow menu; row gestures retain
+their separate meanings. Pulling
 down refreshes through the same coordinator as the visible Refresh action,
 including empty and short lists, with progress and recoverable failure feedback.
 
-Stacked startup/sync/Undo feedback occupies at most 40% of a phone's available
-shell height and scrolls to its actions, leaving room for the task collection.
+Startup/sync feedback occupies at most 40% of a phone's available shell
+height and scrolls to its actions, leaving room for the task collection.
+Completion and deletion Undo appear at the bottom, above navigation and the
+gesture inset, so acting on a row does not shift the remaining rows downward.
+Undo yields during capture and selection, while its original window remains
+valid. Routine bulk sync counts use the compact sync status on phones; bulk
+failures still show their detailed feedback. This keeps short screens usable
+while completing several actions in sequence.
 Composer fields retain their input connection through short keyboard/rotation
 frames. Outcome tests cover persistence and Undo; viewport/text-scale screenshots
 supplement them. See [Testing](TESTING.md#android-takeover-qualification).
@@ -155,27 +165,27 @@ items wrap rather than overflow, and assistive technology hears one phrase
 `projectTaskRowMetadata` policy derives all of it from cached tasks; desktop
 rows keep their dense subtitle.
 
-Phones also restore the v1.5.3 creation affordance instead of an
-always-visible bar. A floating New
-task button sits at the collection's bottom-right; the task list keeps room to
-scroll its last row clear of it, and where a phone in landscape at large text
-leaves too little height for the tallest visible row (measured, since phone
-rows wrap their metadata) above it, the same button docks in the collection
-header so it never covers a row's controls: after the commands when the title
-keeps its minimum width beside both, otherwise beside the title with the
-commands beneath. It leaves while the
-composer is open, a keyboard is up or selection mode is active. Tapping it
-opens a composer pinned at the top of the collection with focus in the title.
-Cancel and Add sit on the title row, which never scrolls; optional multiline
-notes, destination, due date and Paste multiple scroll below it, and the app
-header steps aside while the composer is open above the keyboard, so both
-actions stay on screen. Keyboard submit or Add stores the title and notes
-through the shared create command in the selected list, clears the fields and
-keeps the composer open and focused for the next capture; a rejected or failed
-capture keeps the title and notes. System Back first lowers a raised keyboard,
-then closes the composer and keeps its draft for the next open. Cancel
-discards the draft. Neither creates a task. Desktop keeps the quick-capture
-bar described above.
+Phones use a standard app bar: navigation at the leading edge, the current
+list or smart-view title, then Search, compact sync health and an overflow.
+Refresh and Stop sync live in that overflow; pull to refresh remains available.
+The collection header carries its task count, sort and collection actions.
+Details and search have their own app bars instead of a second global toolbar.
+Keyboard focus decoration appears for keyboard use, not ordinary touch.
+
+A floating New task button sits at the collection's bottom-right. The list
+keeps room to scroll its last row clear of it. On short screens where it would
+cover a row's controls, the button docks beside the count and collection
+commands. It leaves during capture, selection or keyboard use. Tapping it
+opens a bottom sheet above the keyboard, with focus in New task and a scrim
+that prevents accidental changes to the underlying list. Cancel and Save stay
+on the title row; optional multiline notes, destination, date and Paste
+multiple scroll when height is limited. Save or keyboard submit stores title
+and notes through the shared create command, then dismisses the sheet. The
+next capture starts empty. A rejected or failed save keeps the draft and
+explains the failure. Back lowers the keyboard first, then dismisses the
+sheet while retaining the draft; tapping the scrim also retains it. Cancel
+discards it. None of these dismissal actions creates a task. Desktop keeps
+its quick-capture bar and consecutive-entry behavior.
 
 In a Google-list collection using manual order, pointer drag shows an overlay
 row plus a before/after insertion marker without moving the canonical rows until
@@ -190,7 +200,9 @@ non-pointer equivalents.
 
 Collection headers use two distinct command modes. Normal mode keeps the
 collection title, a compact visible sort/order control, Select, and one labeled
-collection-actions overflow; infrequent creation, list management, completed
+collection-actions overflow. On phones, the title is in the app bar and Select
+tasks lives in the collection overflow alongside Reorder tasks; long press
+remains a direct selection shortcut. Infrequent creation, list management, completed
 visibility, and destructive clear commands live in that overflow with text
 labels. Selection mode replaces that normal command row with a selected count,
 explicit Exit selection, and labeled bulk actions. It never leaves both command
@@ -216,8 +228,11 @@ then returns to the parent's details and, next, to the collection. The
 collection stays as it was when it shows the hit's top-level task (the task, or
 a subtask's parent); otherwise that task's list opens, as in v1.5.3.
 
-Task details offer Previous and Next beside Back and Close. They step through
-the ordering the user came from: the visible collection, with its view, sort
+Phone details have one Back action, completion beside the editable title,
+a date row, notes that grow with content, subtasks, and expandable Google Tasks
+links. Edit, move, organize, duplicate, Previous/Next and Delete live in the
+app-bar task menu. Desktop keeps Previous and Next beside Back and Close.
+Previous and Next step through the ordering the user came from: the visible collection, with its view, sort
 and completed filter, for a top-level task, and the parent's subtasks, as
 details list them, for a subtask. Each control is disabled at its end of the
 ordering and in a one-task view. Steps are lateral, so Back still leaves for

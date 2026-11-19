@@ -478,8 +478,12 @@ _Visual _visualFor(SyncHealth health, ColorScheme colors) =>
         },
       ),
       SyncHealthOutcome.good => (
-        background: const Color(0xffd9f3e3),
-        foreground: const Color(0xff153f28),
+        background: colors.brightness == Brightness.dark
+            ? const Color(0xff153f28)
+            : const Color(0xffd9f3e3),
+        foreground: colors.brightness == Brightness.dark
+            ? const Color(0xffd9f3e3)
+            : const Color(0xff153f28),
         icon: Icons.cloud_done_outlined,
       ),
     };

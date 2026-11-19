@@ -112,7 +112,15 @@ void main() {
     await tester.tap(find.text('Linux detail parent'));
     await tester.pump();
     expect(find.text('Linux child A'), findsOneWidget);
+    expect(find.text('Linux child B'), findsNothing);
+    final completedToggle = find.byKey(const Key('toggle-completed-subtasks'));
+    await tester.ensureVisible(completedToggle);
+    await tester.tap(completedToggle);
+    await tester.pumpAndSettle();
     expect(find.text('Linux child B'), findsOneWidget);
+    await tester.tap(completedToggle);
+    await tester.pumpAndSettle();
+    expect(find.text('Linux child B'), findsNothing);
     expect(find.text('Open in Google Tasks'), findsOneWidget);
     expect(find.text('Links in task content'), findsOneWidget);
     await tester.ensureVisible(

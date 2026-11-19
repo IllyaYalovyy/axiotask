@@ -364,7 +364,7 @@ final class _DateMenu extends StatelessWidget {
 }
 
 /// The phone's on-demand capture surface, opened by the floating add button
-/// and pinned at the top of the task collection.
+/// as a bottom sheet above the keyboard.
 ///
 /// It drives the same [QuickAddViewModel] as the desktop [QuickAddBar], so
 /// date parsing, destination, validation and persistence are shared; the
@@ -378,6 +378,7 @@ final class PhoneComposerPanel extends StatefulWidget {
     required this.lists,
     required this.focusNode,
     required this.onCancel,
+    this.onSaved,
     this.onPasteMultiple,
     super.key,
   });
@@ -390,6 +391,7 @@ final class PhoneComposerPanel extends StatefulWidget {
 
   /// Discards the draft and closes the panel. Never creates a task.
   final VoidCallback onCancel;
+  final VoidCallback? onSaved;
   final VoidCallback? onPasteMultiple;
 
   @override
@@ -418,9 +420,12 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
     );
   }
 
-  void _submit() {
+  Future<void> _submit() async {
     if (widget.viewModel.state.isSubmitting) return;
-    unawaited(widget.viewModel.submit());
+    await widget.viewModel.submit();
+    if (mounted && widget.viewModel.state.successMessage != null) {
+      widget.onSaved?.call();
+    }
   }
 
   @override
@@ -429,14 +434,14 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
     builder: (context, _) {
       final state = widget.viewModel.state;
       final colors = Theme.of(context).colorScheme;
-      final completion = state.successMessage ?? state.failureMessage;
+      final completion = state.failureMessage;
       final focusRestoreKey = completion == null
           ? null
           : '$completion:${state.input}:${state.notes}';
       if (focusRestoreKey != null && _focusRestoredFor != focusRestoreKey) {
         _focusRestoredFor = focusRestoreKey;
-        // Rapid entry: after an add or a rejected add, keep composing in
-        // the title unless the user is still writing notes.
+        // A rejected save keeps the draft and returns focus to the title
+        // unless the user is still writing notes.
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted && !_notesFocus.hasFocus) {
             widget.focusNode.requestFocus();
@@ -468,7 +473,7 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
               // A hint rather than a floating label keeps the title row one
               // control high above a landscape keyboard.
               decoration: const InputDecoration(
-                hintText: 'Task title',
+                hintText: 'New task',
                 semanticCounterText: '',
                 counterText: '',
                 isDense: true,
@@ -476,27 +481,27 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
                   horizontal: 12,
                   vertical: 12,
                 ),
-                border: OutlineInputBorder(),
+                border: InputBorder.none,
               ),
+              style: Theme.of(context).textTheme.titleLarge,
               onChanged: widget.viewModel.setInput,
-              // Keep the field focused (and the keyboard up) for the next
-              // capture; the view model clears it after a durable add.
+              // Keep the keyboard until persistence succeeds. A validation
+              // or storage failure leaves the draft ready for correction.
               onEditingComplete: () {},
               onSubmitted: (_) => _submit(),
             ),
           ),
           const SizedBox(width: 8),
-          IconButton.filled(
+          TextButton(
             key: const Key('quick-add-submit'),
-            tooltip: 'Add task',
-            constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+            style: TextButton.styleFrom(minimumSize: const Size(64, 48)),
             onPressed: canSubmit ? _submit : null,
-            icon: state.isSubmitting
+            child: state.isSubmitting
                 ? const SizedBox.square(
                     dimension: 20,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.arrow_upward),
+                : const Text('Save'),
           ),
         ],
       );
@@ -514,10 +519,10 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
           textInputAction: TextInputAction.newline,
           textCapitalization: TextCapitalization.sentences,
           decoration: const InputDecoration(
-            labelText: 'Notes (optional)',
+            hintText: 'Add notes',
             counterText: '',
             prefixIcon: Icon(Icons.notes_outlined),
-            border: OutlineInputBorder(),
+            border: InputBorder.none,
           ),
           onChanged: widget.viewModel.setNotes,
         ),
@@ -555,9 +560,11 @@ final class _PhoneComposerPanelState extends State<PhoneComposerPanel> {
       return Material(
         key: const Key('composer-surface'),
         color: colors.surfaceContainerLow,
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(20)),
+        elevation: 8,
+        clipBehavior: Clip.antiAlias,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 8, 4),
+          padding: const EdgeInsets.fromLTRB(8, 12, 16, 12),
           child: LayoutBuilder(
             builder: (context, constraints) {
               return Column(

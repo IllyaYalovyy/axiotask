@@ -11,8 +11,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SHELL = 'lib/src/app/adaptive_shell.dart'
 WIDGET_TEST = 'test/features/tasks/adaptive_shell_test.dart'
 MUTATIONS = [
-    ('menu', SHELL, 'constraints: _taskActionMenuConstraints,\n                    onSelected: widget.onAction,',
-     'constraints: const BoxConstraints.tightFor(width: 48),\n                    onSelected: widget.onAction,',
+    ('menu', SHELL, 'constraints: _taskActionMenuConstraints,\n                    onSelected: _runAction,',
+     'constraints: const BoxConstraints.tightFor(width: 48),\n                    onSelected: _runAction,',
      WIDGET_TEST, '01 overflow menu is readable and reachable'),
     ('gesture', SHELL, 'onComplete: widget.onSwipeComplete,', 'onComplete: null,',
      WIDGET_TEST, '02 a right swipe completes exactly the swiped row'),

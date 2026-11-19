@@ -120,12 +120,19 @@ Future<int> runRegression(
 
   var testExitCode = -1;
   var reporterLines = const <String>[];
+  // Interrupted runs can leave a test process waiting for its old driver.
+  // Never reuse that process or its private data for a subsequent run.
+  final startupErrors = android && productionBefore != null
+      ? await _removeIsolatedPackage(options, run)
+      : const <String>[];
   if (testPaths.isEmpty) {
     infrastructure.add('Subset ${options.subset} has no implemented test');
   } else if (android && productionBefore == null) {
     infrastructure.add(
       'Could not read the state of $productionPackage; refusing to install',
     );
+  } else if (startupErrors.isNotEmpty) {
+    infrastructure.addAll(startupErrors);
   } else if (!android ||
       await _verifyIsolatedBuild(options, run, executionPaths)) {
     final result = await run(options.flutter, <String>[
@@ -404,12 +411,44 @@ Future<void> _write(RunnerOptions options, String name, String contents) =>
 
 Future<CommandResult> runProcess(
   String executable,
-  List<String> arguments,
-) async {
-  final result = await Process.run(executable, arguments);
-  return CommandResult(
-    result.exitCode,
-    result.stdout as String,
-    result.stderr as String,
-  );
+  List<String> arguments, {
+  void Function(String) log = print,
+}) async {
+  final process = await Process.start(executable, arguments);
+  final flutter = executable.split(Platform.pathSeparator).last == 'flutter';
+  Future<String> collect(Stream<List<int>> stream) async {
+    final output = StringBuffer();
+    await for (final line
+        in stream.transform(utf8.decoder).transform(const LineSplitter())) {
+      output.writeln(line);
+      if (!flutter) continue;
+      // Show startup and test progress immediately without dumping screenshot
+      // payloads. Keep the complete reporter stream for artifact evaluation.
+      try {
+        final event = jsonDecode(line);
+        if (event is! Map<String, dynamic>) {
+          log(line);
+          continue;
+        }
+        if (event['type'] == 'testStart') {
+          log('RUN ${event['test']['name']}');
+        } else if (event['type'] == 'error') {
+          log('${event['error']}');
+        } else if (event['type'] == 'print') {
+          final message = event['message'] as String;
+          if (!message.startsWith(regressionEventPrefix) ||
+              message.contains('"event":"case"')) {
+            log(message);
+          }
+        }
+      } on FormatException {
+        log(line);
+      }
+    }
+    return output.toString();
+  }
+
+  final output = collect(process.stdout);
+  final errors = collect(process.stderr);
+  return CommandResult(await process.exitCode, await output, await errors);
 }

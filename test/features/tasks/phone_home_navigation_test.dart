@@ -31,7 +31,144 @@ void main() {
     await _loadMaterialIcons();
   });
 
+  testWidgets('phone app bar anchors navigation, title and actions', (
+    tester,
+  ) async {
+    await _pump(tester, _portrait);
+    final navigation = find.byTooltip('Open navigation');
+    final title = find.byKey(const Key('phone-collection-title'));
+    final search = find.byTooltip('Search tasks');
+    expectTouchTarget(tester, navigation, label: 'Open navigation');
+    expect(tester.getRect(navigation).left, lessThan(16));
+    expect(
+      tester.getRect(title).left,
+      greaterThanOrEqualTo(tester.getRect(navigation).right),
+    );
+    expect(
+      tester.getRect(title).right,
+      lessThanOrEqualTo(tester.getRect(search).left),
+    );
+    expect(find.byTooltip('Refresh'), findsNothing);
+    expect(find.byTooltip('Stop sync'), findsNothing);
+    expect(find.byKey(const Key('touch-reorder-1')), findsNothing);
+    await tester.tap(find.byTooltip('Collection actions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Reorder tasks'), findsOneWidget);
+  });
+
+  testWidgets('phone composer sits above the keyboard and shields the list', (
+    tester,
+  ) async {
+    final fixture = await _pump(tester, _portrait);
+    final rowPosition = tester.getCenter(find.text('Pay rent'));
+    await tester.tap(find.byKey(const Key('phone-add-task')));
+    await tester.pumpAndSettle();
+    tester.view
+      ..viewInsets = const FakeViewPadding(bottom: 300)
+      ..padding = const FakeViewPadding(top: 24);
+    await tester.pumpAndSettle();
+    final composer = find.byKey(const Key('composer-surface'));
+    final keyboardTop = tester.view.physicalSize.height - 300;
+    expect(tester.getRect(composer).bottom, closeTo(keyboardTop, 0.5));
+    expectTouchTarget(
+      tester,
+      find.byKey(const Key('quick-add-submit')),
+      label: 'Save',
+    );
+    await tester.enterText(
+      find.byKey(const Key('quick-add-input')),
+      'Draft stays here',
+    );
+    await tester.tapAt(rowPosition);
+    await tester.pumpAndSettle();
+    expect(composer, findsNothing);
+    expect(
+      fixture.viewModel.state.selectedTaskId,
+      isNull,
+      reason: 'The scrim intercepts the row tap',
+    );
+    tester.view
+      ..resetViewInsets()
+      ..padding = const FakeViewPadding(top: 24, bottom: 48);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('phone-add-task')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('quick-add-input')))
+          .controller!
+          .text,
+      'Draft stays here',
+    );
+  });
+
+  testWidgets(
+    'phone details keep one app bar and reachable secondary actions at 2x',
+    (tester) async {
+      final fixture = await _pump(
+        tester,
+        const PhoneViewport(320, PhoneOrientation.portrait, 2),
+      );
+      await tester.tap(find.text('Pay rent'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBar), findsOneWidget);
+      expect(find.byKey(const Key('phone-application-header')), findsNothing);
+      expect(find.byTooltip('Close details'), findsNothing);
+      expect(find.byKey(const Key('task-detail-next')), findsNothing);
+      expectTouchTarget(
+        tester,
+        find.byTooltip('Back to task collection'),
+        label: 'Back',
+      );
+      final actions = find.byKey(const Key('task-detail-actions-menu'));
+      expectTouchTarget(
+        tester,
+        find.descendant(of: actions, matching: find.byType(IconButton)),
+        label: 'Task actions',
+      );
+      await tester.tap(actions);
+      await tester.pumpAndSettle();
+      final next = find.byKey(const Key('task-detail-next'));
+      await tester.ensureVisible(next);
+      await tester.pumpAndSettle();
+      expect(next.hitTestable(), findsOneWidget);
+      expectTouchTarget(tester, next, label: 'Next task');
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(next, findsNothing, reason: 'Back dismisses the task menu first');
+      expect(fixture.viewModel.state.selectedTaskId, const TaskId(1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   group('phone smart-view bar', () {
+    testWidgets('search uses leading Back and a separate Clear action', (
+      tester,
+    ) async {
+      await _pump(tester, _portrait);
+      await tester.tap(find.byTooltip('Search tasks'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppBar), findsOneWidget);
+      expect(find.byKey(const Key('phone-application-header')), findsNothing);
+      final back = find.byTooltip('Back to task collection');
+      expectTouchTarget(tester, back, label: 'Back to task collection');
+      final field = find.byKey(const Key('search-input'));
+      expect(
+        tester.getRect(back).right,
+        lessThanOrEqualTo(tester.getRect(field).left),
+      );
+      await tester.enterText(field, 'rent');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Clear search'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+      expect(field, findsOneWidget, reason: 'Clear keeps search open');
+      await tester.tap(back);
+      await tester.pumpAndSettle();
+      expect(field, findsNothing);
+      expect(_title, 'Inbox');
+    });
+
     testWidgets('offers the five reference views with their counts', (
       tester,
     ) async {
@@ -305,9 +442,7 @@ void main() {
       expect(add, findsOneWidget, reason: 'The add button docks');
       expect(_bar, findsOneWidget);
       final addRect = tester.getRect(add);
-      final title = tester.getRect(
-        find.descendant(of: header, matching: find.text('Inbox')),
-      );
+      final title = tester.getRect(find.byKey(const Key('collection-count')));
       final scroll = tester.getRect(
         find.byKey(const Key('collection-header-scroll')),
       );
@@ -351,7 +486,7 @@ void main() {
       );
       expect(add, findsOneWidget, reason: 'The add button docks');
       final titleRect = tester.getRect(
-        find.descendant(of: header, matching: find.text('Inbox')),
+        find.byKey(const Key('collection-count')),
       );
       final addRect = tester.getRect(add);
       final actions = tester.getRect(
@@ -554,6 +689,40 @@ void main() {
         ),
       );
     });
+    testWidgets('phone details ${brightness.name} golden', (tester) async {
+      await _pump(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+        brightness: brightness,
+      );
+      await tester.tap(find.text('Plan trip'));
+      await tester.pumpAndSettle();
+      await expectLater(
+        find.byType(AdaptiveShell),
+        matchesGoldenFile(
+          '../../goldens/linux/phone_details_${brightness.name}.png',
+        ),
+      );
+    });
+    testWidgets('phone composer ${brightness.name} golden', (tester) async {
+      await _pump(
+        tester,
+        const PhoneViewport(360, PhoneOrientation.portrait, 1),
+        brightness: brightness,
+      );
+      await tester.tap(find.byKey(const Key('phone-add-task')));
+      await tester.pumpAndSettle();
+      tester.view
+        ..viewInsets = const FakeViewPadding(bottom: 300)
+        ..padding = const FakeViewPadding(top: 24);
+      await tester.pumpAndSettle();
+      await expectLater(
+        find.byType(AdaptiveShell),
+        matchesGoldenFile(
+          '../../goldens/linux/phone_composer_${brightness.name}.png',
+        ),
+      );
+    });
   }
 }
 
@@ -603,9 +772,13 @@ Color? _textColor(WidgetTester tester, Finder text) =>
     tester.widget<Text>(text).style?.color;
 
 String? get _title {
-  final header = find.byKey(const Key('collection-header'));
-  final texts = find.descendant(of: header, matching: find.byType(Text));
-  return (texts.evaluate().first.widget as Text).data;
+  return (find
+              .byKey(const Key('phone-collection-title'))
+              .evaluate()
+              .single
+              .widget
+          as Text)
+      .data;
 }
 
 List<String> _visibleRowTitles(_Fixture fixture) =>

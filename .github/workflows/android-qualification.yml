@@ -1,0 +1,46 @@
+name: Retain physical Android qualification
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Draft release containing android-release-qualification.zip
+        required: true
+      evidence_sha256:
+        description: SHA-256 of the reviewed qualification archive
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  retain:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download reviewed physical evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          EVIDENCE_SHA256: ${{ inputs.evidence_sha256 }}
+        run: |
+          [[ "$EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          gh release download "$RELEASE_TAG" --pattern android-release-qualification.zip
+          printf '%s  android-release-qualification.zip\n' "$EVIDENCE_SHA256" | sha256sum -c -
+          python3 - <<'PY'
+          import json, os, pathlib, zipfile
+          root = pathlib.Path('evidence').resolve()
+          with zipfile.ZipFile('android-release-qualification.zip') as archive:
+              for entry in archive.infolist():
+                  assert (root / entry.filename).resolve().is_relative_to(root)
+              archive.extractall(root)
+          smoke = json.loads((root / 'smoke.json').read_text())
+          assert smoke['source_commit'] == os.environ['GITHUB_SHA']
+          assert smoke['execution_mode'] == 'signed-release-physical'
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release-qualification-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

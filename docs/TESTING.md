@@ -42,6 +42,14 @@ selects, horizontal swipe acts, and dedicated drag handles reorder in manual
 order. The task presentation import test prevents direct database and sync
 engine/coordinator imports from bypassing the domain commands.
 
+The native navigation, touch-reorder, and completion cases also cover ktask
+72–74: task menu moves and drawer list moves survive reconstruction over the
+same SQLite database, and completed subtasks start hidden, can be shown and
+hidden, and stay completed after restart. The completed-subtask widget contract
+runs on both Android and Linux layouts. For ktask 75, coordinator and ViewModel
+tests hold synchronization open while successive local commands complete,
+then verify that their queued follow-up synchronization runs.
+
 The complete entrypoint builds one APK for all suites. Its import coverage is
 checked against the manifest, and the runner still rejects missing/duplicate
 case results. `python3 tool/android_regression/check_sensitivity.py` copies the

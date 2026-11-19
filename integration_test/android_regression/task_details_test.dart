@@ -256,7 +256,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.widgetWithText(FilledButton, 'Save'), findsNothing);
-    expect(find.text('Changes save automatically'), findsOneWidget);
+    expect(find.text('Unsaved changes'), findsNothing);
     await f.capture(t, 'inline_fields');
 
     // Title by touch; tapping the notes field moves focus and stores it.
@@ -427,11 +427,9 @@ void main() {
 
       // The audit's assertion: details offer Previous and Next.
       await f.openParent(t);
-      expect(find.byTooltip('Next task').hitTestable(), findsOneWidget);
-      expect(find.byTooltip('Previous task'), findsOneWidget);
-      expect(_enabled(t), (false, true), reason: 'first task');
+      expect(await _enabled(t), (false, true), reason: 'first task');
       await f.capture(t, 'first_task');
-      await t.tap(previous);
+      await _step(t, previous);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, f.parent, reason: 'boundary');
 
@@ -442,7 +440,7 @@ void main() {
       await t.enterText(notes, 'Stored before Next');
       await t.pump();
       expect((await f.task(f.parent)).notes, 'Audit notes https://example.com');
-      await t.tap(next);
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, f.second);
       _expectOpen(t, 'Audit second task');
@@ -460,24 +458,28 @@ void main() {
       expect(parentIntent?.state, DesiredStateLifecycle.pending);
       expect((await f.task(f.second)).notes, isNull);
       expect(await desired.readTask(f.account, f.second), isNull);
-      expect(_enabled(t), (true, true));
+      expect(await _enabled(t), (true, true));
+      await _openTaskActions(t);
+      await t.ensureVisible(next);
       _expectTouchTargetsApart(t, previous, next);
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
       await f.capture(t, 'middle_task');
 
       // Next walks to the end, where it disables; Previous walks back.
-      await t.tap(next);
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, alpha);
       _expectOpen(t, 'Audit alpha');
-      await t.tap(next);
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, zulu);
       _expectOpen(t, 'Audit zulu');
-      expect(_enabled(t), (true, false), reason: 'last task');
-      await t.tap(next);
+      expect(await _enabled(t), (true, false), reason: 'last task');
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, zulu, reason: 'boundary');
-      await t.tap(previous);
+      await _step(t, previous);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, alpha);
 
@@ -496,14 +498,14 @@ void main() {
         description: 'title sorting to be selected',
       );
       await f.openParent(t);
-      expect(_enabled(t), (true, true));
-      await t.tap(previous);
+      expect(await _enabled(t), (true, true));
+      await _step(t, previous);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, alpha, reason: 'title order');
-      expect(_enabled(t), (false, true), reason: 'first by title');
-      await t.tap(next);
+      expect(await _enabled(t), (false, true), reason: 'first by title');
+      await _step(t, next);
       await t.pumpAndSettle();
-      await t.tap(next);
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, f.second);
 
@@ -522,12 +524,12 @@ void main() {
       ]);
       expect(f.model.state.selectedTaskId, f.second);
       _expectOpen(t, 'Audit second task');
-      expect(_enabled(t), (true, true));
+      expect(await _enabled(t), (true, true));
       await f.capture(t, 'completed_task');
-      await t.tap(next);
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, zulu);
-      await t.tap(previous);
+      await _step(t, previous);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, f.parent, reason: 'second hidden');
 
@@ -538,12 +540,12 @@ void main() {
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, f.child);
       _expectOpen(t, 'Audit child');
-      expect(_enabled(t), (false, true));
-      await t.tap(next);
+      expect(await _enabled(t), (false, true));
+      await _step(t, next);
       await t.pumpAndSettle();
       expect(f.model.state.selectedTaskId, secondChild);
       _expectOpen(t, 'Audit second child');
-      expect(_enabled(t), (true, false));
+      expect(await _enabled(t), (true, false));
       await f.capture(t, 'subtask_steps');
       await t.binding.handlePopRoute();
       await t.pumpAndSettle();
@@ -561,7 +563,10 @@ void main() {
       await t.tap(find.text('Audit destination task'));
       await t.pumpAndSettle();
       _expectOpen(t, 'Audit destination task');
-      expect(_enabled(t), (false, false), reason: 'only task in the list');
+      expect(await _enabled(t), (
+        false,
+        false,
+      ), reason: 'only task in the list');
 
       // Only the edit and the completion changed anything.
       for (final id in <TaskId>[alpha, zulu, f.child, secondChild]) {
@@ -585,6 +590,7 @@ void main() {
     await t.tap(find.text('Audit child'));
     await t.pumpAndSettle();
     expect(f.model.state.selectedTaskId, f.child);
+    expect(find.text('Subtasks'), findsNothing);
     await _openTaskActions(t);
     expect(
       find.textContaining('Duplicate').hitTestable(),
@@ -653,7 +659,10 @@ void main() {
     await t.pumpAndSettle();
     expect(f.model.state.selectedTaskId, parentCopy.id);
     _expectOpen(t, 'Audit parent (copy)');
-    expect(find.text('No subtasks'), findsOneWidget);
+    expect(
+      f.model.state.tasks.where((task) => task.parentTaskId == parentCopy.id),
+      isEmpty,
+    );
     await t.binding.handlePopRoute();
     await t.pumpAndSettle();
     await f.openParent(t);
@@ -674,6 +683,8 @@ Future<void> _openCalendar(WidgetTester t) async {
   await t.ensureVisible(due);
   await t.pumpAndSettle();
   await t.tap(due);
+  await t.pumpAndSettle();
+  await t.ensureVisible(find.text('Choose date'));
   await t.pumpAndSettle();
   await t.tap(find.text('Choose date').hitTestable());
   await t.pumpAndSettle();
@@ -717,14 +728,37 @@ void _expectCalendarFits(WidgetTester t, PhoneViewport viewport) {
 }
 
 /// Whether the details' Previous and Next controls are enabled.
-(bool, bool) _enabled(WidgetTester t) => (
-  t
-          .widget<IconButton>(find.byKey(const Key('task-detail-previous')))
-          .onPressed !=
-      null,
-  t.widget<IconButton>(find.byKey(const Key('task-detail-next'))).onPressed !=
-      null,
-);
+Future<(bool, bool)> _enabled(WidgetTester t) async {
+  await _openTaskActions(t);
+  final result = (
+    t
+        .widget<PopupMenuItem<Object?>>(
+          find.byKey(const Key('task-detail-previous')),
+        )
+        .enabled,
+    t
+        .widget<PopupMenuItem<Object?>>(
+          find.byKey(const Key('task-detail-next')),
+        )
+        .enabled,
+  );
+  await t.binding.handlePopRoute();
+  await t.pumpAndSettle();
+  return result;
+}
+
+Future<void> _step(WidgetTester t, Finder control) async {
+  await _openTaskActions(t);
+  await t.ensureVisible(control);
+  await t.pumpAndSettle();
+  final enabled = t.widget<PopupMenuItem<Object?>>(control).enabled;
+  await t.tap(control);
+  await t.pumpAndSettle();
+  if (!enabled) {
+    await t.binding.handlePopRoute();
+    await t.pumpAndSettle();
+  }
+}
 
 /// The details show [title] in their own title field.
 void _expectOpen(WidgetTester t, String title) {

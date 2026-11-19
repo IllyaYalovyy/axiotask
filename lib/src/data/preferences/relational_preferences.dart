@@ -194,7 +194,7 @@ final class DriftRelationalPreferences implements RelationalPreferences {
         );
         for (var index = 0; index < orderedTaskListIds.length; index += 1) {
           final taskListId = orderedTaskListIds[index];
-          await _database.customStatement(
+          await _database.customInsert(
             '''
             INSERT INTO task_list_preferences (
               account_id, task_list_id, sidebar_order,
@@ -203,7 +203,12 @@ final class DriftRelationalPreferences implements RelationalPreferences {
             ON CONFLICT(account_id, task_list_id) DO UPDATE SET
               sidebar_order = excluded.sidebar_order
             ''',
-            <Object>[accountId.value, taskListId.value, index],
+            variables: <Variable<int>>[
+              Variable<int>(accountId.value),
+              Variable<int>(taskListId.value),
+              Variable<int>(index),
+            ],
+            updates: {_database.taskListPreferenceRows},
           );
         }
       });

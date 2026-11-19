@@ -118,6 +118,15 @@ the distribution artifact on an isolated physical target, preserve inspected
 comparison screenshots, upload the qualification artifact, then rerun the
 publication job. Do not rebuild or substitute the APK after qualification.
 
+To retain locally collected evidence without another source branch, zip the
+reviewed `smoke.json` and its screenshots at the archive root, and upload it as
+`android-release-qualification.zip` to a temporary draft of the release. Dispatch
+**Retain physical Android qualification** on `main` at the qualified source
+commit, supplying the draft's tag and archive SHA-256. Set
+`ANDROID_QUALIFICATION_RUN_ID` to that successful run, remove the temporary draft
+(keep the tag), and rerun publication. The import only retains evidence; the
+publication job still validates every check, screenshot, and exact APK digest.
+
 The artifact contains `smoke.json` and screenshot files. Schema version 1 requires
 `source_commit`, `apk_sha256`, `application_id` (`com.axiotask.app`),
 `signing_certificate_sha256` (the pinned certificate above), `debuggable: false`,

@@ -35,8 +35,8 @@ void main() {
 
   regressionCase('07_quick_capture_twice', phoneOnHost: true, (t, f) async {
     const titles = <String>['Captured first', 'Captured second'];
-    await _openPhoneComposer(t);
     for (final title in titles) {
+      await _openPhoneComposer(t);
       await t.enterText(find.byKey(const Key('quick-add-input')), title);
       await t.pump();
       await t.tap(find.byKey(const Key('quick-add-submit')));
@@ -45,6 +45,8 @@ void main() {
         () async => (await f.tasks()).any((task) => task.title == title),
         description: '"$title" to persist',
       );
+      await t.pumpAndSettle();
+      expect(find.byKey(const Key('composer-surface')), findsNothing);
     }
     final captured = (await f.tasks()).where(
       (task) => titles.contains(task.title),
@@ -52,14 +54,15 @@ void main() {
     expect(captured.map((task) => task.title), unorderedEquals(titles));
     expect(captured.map((task) => task.taskListId).toSet(), {f.list});
     expect(captured.map((task) => task.id).toSet(), hasLength(2));
-    // The composer stays open, empty and ready for a third capture.
-    expect(find.byKey(const Key('composer-surface')), findsOneWidget);
+    // Saving returns to the collection; the next capture starts fresh.
+    expect(find.byKey(const Key('composer-surface')), findsNothing);
     expect(find.text('Captured second'), findsOneWidget, reason: 'Listed');
   });
 
   regressionCase('10_edit_save_persists', (t, f) async {
     await f.openParent(t);
-    await t.tap(find.byTooltip('Edit task content'));
+    await _openPhoneTaskActions(t);
+    await t.tap(find.text('Edit task').hitTestable());
     await t.pumpAndSettle();
     await t.enterText(_textFieldLabelled('Notes'), 'Edited audit notes');
     await t.tap(find.widgetWithText(FilledButton, 'Save'));
@@ -123,6 +126,7 @@ void main() {
 
   regressionCase('16_move_task_persists', (t, f) async {
     await f.openParent(t);
+    await _openPhoneTaskActions(t);
     await t.ensureVisible(find.text('Move to list'));
     await t.tap(find.text('Move to list'));
     await t.pumpAndSettle();
@@ -247,6 +251,58 @@ void main() {
   regressionCase('24_navigation_drawer', (t, f) async {
     await t.tap(find.byTooltip('Open navigation'));
     await t.pumpAndSettle();
+    Future<void> moveDestination(
+      String label,
+      List<TaskListId> expected,
+    ) async {
+      final tile = find.widgetWithText(ListTile, 'Audit destination');
+      final menu = find.descendant(
+        of: tile,
+        matching: find.byTooltip('List view settings'),
+      );
+      await t.ensureVisible(menu);
+      await t.tap(menu);
+      await t.pumpAndSettle();
+      await t.ensureVisible(find.text(label));
+      await t.tap(find.text(label));
+      await settleUntil(
+        t,
+        () async =>
+            !f.model.state.isPreferenceCommandPending &&
+            f.model.state.orderedTaskLists.map((l) => l.id).join(',') ==
+                expected.join(','),
+        description: 'list order preference stored',
+      );
+    }
+
+    final initial = f.model.state.orderedTaskLists.map((l) => l.id).toList();
+    expect(initial, [f.list, f.destination]);
+    await moveDestination('Move list up', [f.destination, f.list]);
+    expect(f.model.state.orderedTaskLists.map((l) => l.id), [
+      f.destination,
+      f.list,
+    ]);
+    expect(
+      t.getTopLeft(find.text('Audit destination').hitTestable()).dy,
+      lessThan(t.getTopLeft(find.text('Audit tasks').hitTestable()).dy),
+    );
+    await f.capture(t, 'lists_reordered');
+    await f.restartApp(t);
+    await settleUntil(
+      t,
+      () =>
+          f.model.state.orderedTaskLists.map((l) => l.id).join(',') ==
+          [f.destination, f.list].join(','),
+      description: 'reordered lists restored from SQLite',
+    );
+    expect(f.model.state.orderedTaskLists.map((l) => l.id), [
+      f.destination,
+      f.list,
+    ]);
+    await t.tap(find.byTooltip('Open navigation'));
+    await t.pumpAndSettle();
+    await moveDestination('Move list down', initial);
+    expect(f.model.state.orderedTaskLists.map((l) => l.id), initial);
     await t.tap(find.text('Audit destination').hitTestable());
     await t.pumpAndSettle();
     expect(f.model.state.selectedTaskListId, f.destination);
@@ -483,6 +539,7 @@ void main() {
         .toList();
     expect(topLevelOrder(), <TaskId>[f.parent, f.second]);
     await f.openParent(t);
+    await _openPhoneTaskActions(t);
     await t.ensureVisible(find.text('Move down'));
     await t.tap(find.text('Move down'));
     await settleUntil(
@@ -494,6 +551,14 @@ void main() {
     expect(topLevelOrder(), <TaskId>[f.second, f.parent]);
     expect((await f.task(f.child)).parentTaskId, f.parent);
   });
+}
+
+/// Phone secondary commands live in the app-bar menu; desktop keeps its
+/// inspector controls. Both paths exercise the same persisted commands.
+Future<void> _openPhoneTaskActions(WidgetTester t) async {
+  if (find.byType(AppBar).evaluate().isEmpty) return;
+  await t.tap(find.byKey(const Key('task-detail-actions-menu')));
+  await t.pumpAndSettle();
 }
 
 /// Opens the phone composer with its floating add button.

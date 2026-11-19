@@ -9,12 +9,14 @@ final class SearchOverlay extends StatefulWidget {
     required this.viewModel,
     required this.onOpenResult,
     required this.onClose,
+    this.phone = false,
     super.key,
   });
 
   final SearchViewModel viewModel;
   final ValueChanged<TaskSearchResult> onOpenResult;
   final VoidCallback onClose;
+  final bool phone;
 
   @override
   State<SearchOverlay> createState() => _SearchOverlayState();
@@ -53,35 +55,73 @@ final class _SearchOverlayState extends State<SearchOverlay> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: <Widget>[
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
-                  child: Row(
-                    children: <Widget>[
-                      Expanded(
-                        child: TextField(
-                          key: const Key('search-input'),
-                          controller: _controller,
-                          autofocus: true,
-                          textInputAction: TextInputAction.search,
-                          onChanged: widget.viewModel.setQuery,
-                          onSubmitted: (_) => _openSelected(),
-                          decoration: const InputDecoration(
-                            labelText: 'Search tasks',
-                            hintText: 'Title or notes',
-                            prefixIcon: Icon(Icons.search),
-                            border: OutlineInputBorder(),
-                          ),
-                        ),
+                if (widget.phone)
+                  AppBar(
+                    primary: false,
+                    titleSpacing: 4,
+                    leading: IconButton(
+                      tooltip: 'Back to task collection',
+                      onPressed: widget.onClose,
+                      icon: const Icon(Icons.arrow_back),
+                    ),
+                    title: TextField(
+                      key: const Key('search-input'),
+                      controller: _controller,
+                      autofocus: true,
+                      textInputAction: TextInputAction.search,
+                      onChanged: widget.viewModel.setQuery,
+                      onSubmitted: (_) => _openSelected(),
+                      decoration: const InputDecoration(
+                        hintText: 'Search tasks',
+                        border: InputBorder.none,
                       ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        tooltip: 'Close search',
-                        onPressed: widget.onClose,
-                        icon: const Icon(Icons.close),
+                    ),
+                    actions: <Widget>[
+                      ListenableBuilder(
+                        listenable: _controller,
+                        builder: (context, _) => _controller.text.isEmpty
+                            ? const SizedBox.shrink()
+                            : IconButton(
+                                tooltip: 'Clear search',
+                                onPressed: () {
+                                  _controller.clear();
+                                  widget.viewModel.setQuery('');
+                                },
+                                icon: const Icon(Icons.close),
+                              ),
                       ),
                     ],
+                  )
+                else
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: TextField(
+                            key: const Key('search-input'),
+                            controller: _controller,
+                            autofocus: true,
+                            textInputAction: TextInputAction.search,
+                            onChanged: widget.viewModel.setQuery,
+                            onSubmitted: (_) => _openSelected(),
+                            decoration: const InputDecoration(
+                              labelText: 'Search tasks',
+                              hintText: 'Title or notes',
+                              prefixIcon: Icon(Icons.search),
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          tooltip: 'Close search',
+                          onPressed: widget.onClose,
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
                 const Divider(height: 1),
                 Expanded(
                   child: AnimatedBuilder(

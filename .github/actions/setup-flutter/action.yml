@@ -12,6 +12,13 @@ runs:
         flutter-version: '3.50.0'
         channel: stable
         cache: true
+    - name: Configure Flutter Gradle plugin repositories
+      shell: bash
+      run: |
+        gradle_init_dir="${GRADLE_USER_HOME:-$HOME/.gradle}/init.d"
+        mkdir -p "$gradle_init_dir"
+        cp .github/gradle/flutter-plugin-repositories.init.gradle \
+          "$gradle_init_dir/axiotask-flutter-plugin-repositories.init.gradle"
     - name: Install Linux dependencies
       if: inputs.linux-dependencies == 'true'
       shell: bash

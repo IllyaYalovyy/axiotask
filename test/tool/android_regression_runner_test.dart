@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -22,6 +23,39 @@ void main() {
     );
   });
   tearDown(() => root.delete(recursive: true));
+
+  test(
+    'process output retains evidence but progress omits screenshot payloads',
+    () async {
+      final executable = File('${root.path}/flutter');
+      await executable.writeAsString(r'''#!/bin/sh
+cat <<'DATA'
+Starting device
+"plain JSON string"
+{"type":"testStart","test":{"name":"probe"}}
+{"type":"print","message":"AXIOTASK_REGRESSION screenshot payload"}
+DATA
+printf 'startup diagnostic\n' >&2
+exit 7
+''');
+      expect((await Process.run('chmod', ['+x', executable.path])).exitCode, 0);
+      final progress = <String>[];
+      final result = await runZoned(
+        () => runProcess(executable.path, ['test']),
+        zoneSpecification: ZoneSpecification(
+          print: (_, _, _, line) => progress.add(line),
+        ),
+      );
+      expect(result.exitCode, 7);
+      expect(result.stdout, contains('AXIOTASK_REGRESSION screenshot payload'));
+      expect(result.stderr, 'startup diagnostic\n');
+      expect(
+        progress,
+        containsAll(['Starting device', 'RUN probe', 'startup diagnostic']),
+      );
+      expect(progress, isNot(anyElement(contains('screenshot payload'))));
+    },
+  );
 
   Future<(int, List<String>, _FakeDevice)> runWith(
     _FakeDevice device, {
@@ -77,6 +111,37 @@ void main() {
     expect(code, 1);
     expect(lines, contains('CASE 01_one FAILED - Expected: true'));
   });
+
+  test(
+    'removes a stranded test installation before starting a new run',
+    () async {
+      final device = _FakeDevice(
+        cases: <_Case>[_Case.pass('01_one'), _Case.pass('02_two')],
+        previouslyInstalled: true,
+      );
+      final (code, _, _) = await runWith(device);
+      expect(code, 0);
+      expect(device.removedBeforeRun, isTrue);
+    },
+  );
+
+  test(
+    'refuses to run when a stranded test installation cannot be removed',
+    () async {
+      final device = _FakeDevice(
+        cases: const <_Case>[],
+        previouslyInstalled: true,
+        uninstallSucceeds: false,
+      );
+      final (code, lines, _) = await runWith(device);
+      expect(code, 1);
+      expect(device.ranTests, isFalse);
+      expect(
+        lines,
+        anyElement(startsWith('INFRASTRUCTURE Could not uninstall')),
+      );
+    },
+  );
 
   test('fails when an expected case never executes', () async {
     final (code, lines, _) = await runWith(
@@ -447,6 +512,7 @@ final class _FakeDevice {
     this.failingSuiteHook = false,
     this.deviceLostDuringRun = false,
     this.productionStateUnreadable = false,
+    this.previouslyInstalled = false,
   });
 
   final List<_Case> cases;
@@ -459,6 +525,8 @@ final class _FakeDevice {
   final bool failingSuiteHook;
   final bool deviceLostDuringRun;
   final bool productionStateUnreadable;
+  bool previouslyInstalled;
+  bool removedBeforeRun = false;
 
   bool built = false;
   bool ranTests = false;
@@ -505,10 +573,17 @@ final class _FakeDevice {
       );
     }
     if (command.contains('pm list packages')) {
-      return CommandResult(0, ranTests ? 'package:$isolatedPackage\n' : '');
+      return CommandResult(
+        0,
+        ranTests || previouslyInstalled ? 'package:$isolatedPackage\n' : '',
+      );
     }
     if (command.contains('uninstall $isolatedPackage')) {
       uninstalled = uninstallSucceeds;
+      if (uninstallSucceeds && !ranTests) {
+        removedBeforeRun = true;
+        previouslyInstalled = false;
+      }
       return CommandResult(
         uninstallSucceeds ? 0 : 1,
         uninstallSucceeds ? 'Success\n' : 'Failure [DELETE_FAILED]\n',

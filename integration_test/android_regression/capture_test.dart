@@ -4,7 +4,7 @@
 // failed the 2026-11-15 native audit of v1.5.6: phones showed a desktop-style
 // capture bar at the top, with no floating add button and no notes. These
 // contracts drive the real shell over the isolated SQLite fixture by touch:
-// the floating add button opens and focuses the on-demand top composer,
+// the floating add button opens and focuses the bottom-sheet composer,
 // Back lowers the keyboard and then closes it, Cancel creates nothing, and
 // title plus multiline notes persist in the selected list. Controls are
 // measured above a keyboard at phone widths, in both orientations and at 2x
@@ -94,7 +94,7 @@ void main() {
       expect(t.takeException(), isNull, reason: '$viewport composer layout');
       for (final (control, label) in <(Finder, String)>[
         (_cancel, 'Cancel'),
-        (_submit, 'Add task'),
+        (_submit, 'Save'),
       ]) {
         final rect = t.getRect(control);
         expect(rect.top, greaterThanOrEqualTo(0), reason: '$viewport $label');
@@ -138,12 +138,14 @@ void main() {
     expect(first.taskListId, f.destination);
     expect(first.parentTaskId, isNull);
     await f.capture(t, 'after_first');
-    expect(_composer, findsOneWidget, reason: 'Open for the next capture');
+    expect(_composer, findsNothing, reason: 'Save returns to the collection');
+    await _lowerKeyboard(t);
+    await _openComposer(t);
     expect(_text(t, _title), isEmpty);
     expect(_text(t, _notes), isEmpty);
     expect(_focused(t, _title), isTrue, reason: 'Ready for the next title');
 
-    // Second consecutive capture after rotating to landscape at 2x text.
+    // A fresh capture after rotating to landscape at 2x text.
     await usePhoneViewport(
       t,
       const PhoneViewport(360, PhoneOrientation.landscape, 2),
@@ -181,9 +183,8 @@ void main() {
     );
     expect(created.map((task) => task.id).toSet(), hasLength(2));
     await _lowerKeyboard(t);
-    await t.binding.handlePopRoute();
     await t.pumpAndSettle();
-    expect(_composer, findsNothing);
+    expect(_composer, findsNothing, reason: 'Save already closed the sheet');
     expect(find.text('Captured with notes').hitTestable(), findsOneWidget);
   });
 }

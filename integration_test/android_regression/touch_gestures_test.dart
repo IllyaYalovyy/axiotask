@@ -54,6 +54,11 @@ void main() {
       expect(find.byKey(Key('touch-reorder-${f.second.value}')), findsNothing);
       await f.model.setViewSort(ViewSort.manual);
       await t.pumpAndSettle();
+      expect(find.byKey(Key('touch-reorder-${f.second.value}')), findsNothing);
+      await t.tap(find.byTooltip('Collection actions'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Reorder tasks'));
+      await t.pumpAndSettle();
       final handle = find.byKey(Key('touch-reorder-${f.second.value}'));
       await t.ensureVisible(handle);
       final cancelled = await t.startGesture(t.getCenter(handle));
@@ -78,9 +83,17 @@ void main() {
       expect(f.model.state.isBulkSelectionActive, isFalse);
       expect((await f.task(f.second)).status, TaskStatus.needsAction);
       await f.capture(t, 'touch_reordered');
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
+      expect(handle, findsNothing, reason: 'Back leaves reorder mode');
+      expect(f.row(f.parent), findsOneWidget);
       await f.restartApp(t);
       expect((await order()).first, f.second);
       expect((await order()).toSet(), initial.toSet());
+      await t.tap(find.byTooltip('Collection actions'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Reorder tasks'));
+      await t.pumpAndSettle();
 
       // Move the first row to the end, then back to the middle. Verify the
       // repository order after each drop, not only the visual preview.
@@ -113,6 +126,44 @@ void main() {
       }
       await f.restartApp(t);
       expect(await order(), [f.parent, f.second, last]);
+
+      // The tap alternative must visibly move a task and survive restart.
+      Future<void> step(String action, List<TaskId> expected) async {
+        await t.tap(
+          find.descendant(
+            of: f.row(f.second),
+            matching: find.byTooltip('Task actions for Audit second task'),
+          ),
+        );
+        await t.pumpAndSettle();
+        await t.ensureVisible(find.text(action));
+        await t.tap(find.text(action));
+        await settleUntil(
+          t,
+          () async => (await order()).join(',') == expected.join(','),
+          description: 'menu reorder committed',
+        );
+      }
+
+      await step('Move up', [f.second, f.parent, last]);
+      expect(await order(), [f.second, f.parent, last]);
+      await f.restartApp(t);
+      expect(await order(), [f.second, f.parent, last]);
+      await step('Move down', [f.parent, f.second, last]);
+      expect(await order(), [f.parent, f.second, last]);
+      await f.model.setViewSort(ViewSort.title);
+      await t.pumpAndSettle();
+      await t.tap(
+        find.descendant(
+          of: f.row(f.second),
+          matching: find.byTooltip('Task actions for Audit second task'),
+        ),
+      );
+      await t.pumpAndSettle();
+      expect(find.text('Move up'), findsNothing);
+      expect(find.text('Move down'), findsNothing);
+      await t.binding.handlePopRoute();
+      await t.pumpAndSettle();
     },
   );
 

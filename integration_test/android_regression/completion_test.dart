@@ -52,6 +52,39 @@ void main() {
     await t.binding.handlePopRoute();
     await t.pumpAndSettle();
 
+    // A later deletion gets the single bottom Undo offer. Restoring it
+    // reveals the still-valid completion Undo instead of losing either.
+    final collectionTop = t.getTopLeft(
+      find.byKey(const Key('collection-header')),
+    );
+    await t.tap(_rowCompletion(f, f.parent));
+    await _expectFamilyStatus(t, f, TaskStatus.completed);
+    f.clock.advance(const Duration(seconds: 1));
+    await t.tap(f.row(f.second));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const Key('task-detail-actions-menu')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete task').hitTestable());
+    await settleUntil(
+      t,
+      () async => await f.taskOrNull(f.second) == null,
+      description: 'later deletion to persist',
+    );
+    expect(find.text('“Audit second task” deleted'), findsOneWidget);
+    expect(find.byKey(const Key('task-completion-undo')), findsNothing);
+    expect(
+      t.getTopLeft(find.byKey(const Key('collection-header'))),
+      collectionTop,
+    );
+    await t.tap(find.text('Undo').hitTestable());
+    await settleUntil(
+      t,
+      () async => await f.taskOrNull(f.second) != null,
+      description: 'deletion Undo to restore the second task',
+    );
+    _expectUndoOffered('“Audit parent” and 1 subtask completed');
+    await _undo(t, f);
+
     // The offer expires after the Undo window; the completion stays stored.
     await t.tap(_rowCompletion(f, f.parent));
     await _expectFamilyStatus(t, f, TaskStatus.completed);
@@ -122,6 +155,16 @@ void main() {
 
       // Completing a subtask alone never completes its parent.
       await f.openParent(t);
+      final toggle = find.byKey(const Key('toggle-completed-subtasks'));
+      expect(find.byKey(Key('subtask-${done.value}')), findsNothing);
+      expect(find.text('Show 1 completed subtask'), findsOneWidget);
+      await t.ensureVisible(toggle);
+      await t.tap(toggle);
+      await t.pumpAndSettle();
+      expect(find.byKey(Key('subtask-${done.value}')), findsOneWidget);
+      await t.tap(toggle);
+      await t.pumpAndSettle();
+      expect(find.byKey(Key('subtask-${done.value}')), findsNothing);
       await t.ensureVisible(find.byTooltip('Complete Audit child'));
       await t.pumpAndSettle();
       await t.tap(find.byTooltip('Complete Audit child'));
@@ -134,6 +177,19 @@ void main() {
       expect((await f.task(f.second)).status, TaskStatus.needsAction);
       _expectUndoOffered('“Audit child” completed');
       await f.capture(t, 'subtask_completed');
+      expect(find.byKey(Key('subtask-${f.child.value}')), findsNothing);
+      expect(find.text('Show 2 completed subtasks'), findsOneWidget);
+      await t.ensureVisible(toggle);
+      await t.tap(toggle);
+      await t.pumpAndSettle();
+      expect(find.byKey(Key('subtask-${f.child.value}')), findsOneWidget);
+      expect(find.byKey(Key('subtask-${done.value}')), findsOneWidget);
+      await f.restartApp(t);
+      await f.openParent(t);
+      expect(find.byKey(Key('subtask-${f.child.value}')), findsNothing);
+      expect(find.byKey(Key('subtask-${done.value}')), findsNothing);
+      expect(find.text('Show 2 completed subtasks'), findsOneWidget);
+      expect((await f.task(done)).status, TaskStatus.completed);
     },
   );
 }

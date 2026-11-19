@@ -54,6 +54,13 @@ final class TaskDetailsPane extends StatelessWidget {
         ),
       );
     }
+    final phone =
+        compact &&
+        <TargetPlatform>{
+          TargetPlatform.android,
+          TargetPlatform.iOS,
+          TargetPlatform.fuchsia,
+        }.contains(Theme.of(context).platform);
     final task = state.task;
     final alternateParents = state.parentCandidates
         .where((candidate) => candidate.id != task.parentTaskId)
@@ -65,13 +72,16 @@ final class TaskDetailsPane extends StatelessWidget {
       key: ValueKey<TaskId>(task.id),
       viewModel: viewModel,
       task: task,
-      builder: (context, content) => _buildDetails(
-        context,
-        state,
-        content,
-        alternateParents,
-        siblingIndex,
-      ),
+      touchLayout: phone,
+      builder: (context, content) => phone
+          ? _buildPhoneDetails(context, state, content, alternateParents)
+          : _buildDetails(
+              context,
+              state,
+              content,
+              alternateParents,
+              siblingIndex,
+            ),
     );
   }
 
@@ -327,6 +337,326 @@ final class TaskDetailsPane extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPhoneDetails(
+    BuildContext context,
+    TaskDetailState state,
+    TaskContentFields content,
+    List<CachedTask> alternateParents,
+  ) {
+    final task = state.task;
+    final completed = task.status == TaskStatus.completed;
+    final dueText = _phoneDueText(context, state.effectiveDue, viewModel.today);
+    return Column(
+      children: <Widget>[
+        AppBar(
+          primary: false,
+          centerTitle: false,
+          title: Text(state.parent == null ? 'Task details' : 'Subtask'),
+          leading: IconButton(
+            tooltip: state.parent == null
+                ? 'Back to task collection'
+                : 'Back to parent task',
+            onPressed: viewModel.back,
+            icon: const Icon(Icons.arrow_back),
+          ),
+          actions: <Widget>[
+            _PhoneTaskActions(
+              state: state,
+              viewModel: viewModel,
+              alternateParents: alternateParents,
+            ),
+          ],
+        ),
+        Expanded(
+          child: SingleChildScrollView(
+            key: const Key('task-detail-scroll-view'),
+            primary: false,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    IconButton(
+                      key: const Key('task-detail-completion-action'),
+                      tooltip: completed
+                          ? 'Reopen selected task'
+                          : 'Complete selected task',
+                      onPressed: state.isCommandPending
+                          ? null
+                          : () =>
+                                unawaited(viewModel.toggleCompletion(task.id)),
+                      icon: Icon(
+                        completed
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: content.title),
+                  ],
+                ),
+                if (state.failureMessage case final message?)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Text(
+                        message,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 16),
+                _DateShortcutMenu(
+                  enabled: !state.isCommandPending,
+                  task: task,
+                  viewModel: viewModel,
+                  phoneLabel: dueText.title,
+                  phoneSubtitle: dueText.subtitle,
+                ),
+                if (state.dueChangeUndo case final undo?)
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    children: <Widget>[
+                      Text(
+                        'Date changed for ${undo.cascadedCount + 1} related tasks',
+                      ),
+                      TextButton(
+                        onPressed: state.isCommandPending
+                            ? null
+                            : () => unawaited(
+                                viewModel.undoDueChange(undo.groupId),
+                              ),
+                        child: const Text('Undo due changes'),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 8),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Icon(Icons.notes_outlined),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: content.notes),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                if (state.canCreateSubtask || state.children.isNotEmpty)
+                  _InspectorSection(
+                    title: 'Subtasks',
+                    trailing: state.canCreateSubtask
+                        ? TextButton.icon(
+                            onPressed: state.isCommandPending
+                                ? null
+                                : () => _showCreateSubtaskDialog(
+                                    context,
+                                    viewModel,
+                                  ),
+                            icon: const Icon(Icons.add, size: 20),
+                            label: const Text('Add subtask'),
+                          )
+                        : null,
+                    child: state.children.isEmpty
+                        ? const SizedBox.shrink()
+                        : _SubtasksBody(
+                            key: ValueKey<TaskId>(task.id),
+                            viewModel: viewModel,
+                            progress: state.progress,
+                            children: state.children,
+                          ),
+                  ),
+                const SizedBox(height: 16),
+                ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  leading: const Icon(Icons.open_in_new),
+                  title: const Text('Google Tasks'),
+                  childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  children: <Widget>[
+                    TaskLinksSection(task: task, viewModel: viewModel),
+                  ],
+                ),
+                if (state.duplicated case final copy?)
+                  _DuplicatedConfirmation(copy: copy, viewModel: viewModel),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+enum _PhoneTaskAction {
+  edit,
+  moveToList,
+  moveUp,
+  moveDown,
+  makeSubtask,
+  promote,
+  changeParent,
+  duplicate,
+  previous,
+  next,
+  delete,
+}
+
+/// A route-backed Material menu gives Android Back the expected behavior:
+/// dismiss the menu first, then leave details on a subsequent Back.
+final class _PhoneTaskActions extends StatelessWidget {
+  const _PhoneTaskActions({
+    required this.state,
+    required this.viewModel,
+    required this.alternateParents,
+  });
+  final TaskDetailState state;
+  final TaskDetailViewModel viewModel;
+  final List<CachedTask> alternateParents;
+
+  @override
+  Widget build(BuildContext context) {
+    final task = state.task;
+    final enabled = !state.isCommandPending;
+    PopupMenuItem<_PhoneTaskAction> item(
+      _PhoneTaskAction action,
+      String label,
+      IconData icon, {
+      Key? key,
+      bool? available,
+    }) => PopupMenuItem<_PhoneTaskAction>(
+      key: key,
+      value: action,
+      enabled: available ?? enabled,
+      child: Row(
+        children: <Widget>[
+          Icon(icon, size: 24),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              label,
+              style: action == _PhoneTaskAction.delete
+                  ? TextStyle(color: Theme.of(context).colorScheme.error)
+                  : null,
+            ),
+          ),
+        ],
+      ),
+    );
+    return PopupMenuButton<_PhoneTaskAction>(
+      key: const Key('task-detail-actions-menu'),
+      tooltip: 'Task actions',
+      position: PopupMenuPosition.under,
+      icon: const Icon(Icons.more_vert),
+      onSelected: (action) {
+        switch (action) {
+          case _PhoneTaskAction.edit:
+            unawaited(showTaskContentDialog(context, viewModel, task));
+          case _PhoneTaskAction.moveToList:
+            unawaited(
+              showTaskMoveListDialog(
+                context,
+                viewModel,
+                task,
+                state.destinationLists,
+              ),
+            );
+          case _PhoneTaskAction.moveUp:
+            unawaited(viewModel.moveSelectedUp());
+          case _PhoneTaskAction.moveDown:
+            unawaited(viewModel.moveSelectedDown());
+          case _PhoneTaskAction.makeSubtask:
+            unawaited(
+              _showParentDialog(
+                context,
+                viewModel,
+                task,
+                state.parentCandidates,
+              ),
+            );
+          case _PhoneTaskAction.promote:
+            unawaited(viewModel.promote(task.id));
+          case _PhoneTaskAction.changeParent:
+            unawaited(
+              _showParentDialog(context, viewModel, task, alternateParents),
+            );
+          case _PhoneTaskAction.duplicate:
+            unawaited(viewModel.duplicate(task.id));
+          case _PhoneTaskAction.previous:
+            viewModel.selectPrevious();
+          case _PhoneTaskAction.next:
+            viewModel.selectNext();
+          case _PhoneTaskAction.delete:
+            unawaited(viewModel.deleteTask(task.id));
+        }
+      },
+      itemBuilder: (_) => <PopupMenuEntry<_PhoneTaskAction>>[
+        item(_PhoneTaskAction.edit, 'Edit task', Icons.edit_outlined),
+        if (state.destinationLists.isNotEmpty)
+          item(
+            _PhoneTaskAction.moveToList,
+            'Move to list',
+            Icons.drive_file_move_outline,
+          ),
+        if (state.siblingIndex > 0)
+          item(_PhoneTaskAction.moveUp, 'Move up', Icons.arrow_upward),
+        if (state.siblingIndex >= 0 &&
+            state.siblingIndex < state.siblings.length - 1)
+          item(_PhoneTaskAction.moveDown, 'Move down', Icons.arrow_downward),
+        if (task.parentTaskId == null &&
+            !state.hasChildren &&
+            state.parentCandidates.isNotEmpty)
+          item(
+            _PhoneTaskAction.makeSubtask,
+            'Make subtask',
+            Icons.subdirectory_arrow_right,
+          ),
+        if (task.parentTaskId != null)
+          item(
+            _PhoneTaskAction.promote,
+            'Promote to task',
+            Icons.subdirectory_arrow_left,
+          ),
+        if (task.parentTaskId != null && alternateParents.isNotEmpty)
+          item(
+            _PhoneTaskAction.changeParent,
+            'Change parent',
+            Icons.account_tree_outlined,
+          ),
+        if (state.canDuplicate)
+          item(
+            _PhoneTaskAction.duplicate,
+            'Duplicate task',
+            Icons.content_copy_outlined,
+            key: const Key('task-detail-duplicate'),
+          ),
+        const PopupMenuDivider(),
+        item(
+          _PhoneTaskAction.previous,
+          'Previous task',
+          Icons.chevron_left,
+          key: const Key('task-detail-previous'),
+          available: state.previousTaskId != null,
+        ),
+        item(
+          _PhoneTaskAction.next,
+          'Next task',
+          Icons.chevron_right,
+          key: const Key('task-detail-next'),
+          available: state.nextTaskId != null,
+        ),
+        const PopupMenuDivider(),
+        item(_PhoneTaskAction.delete, 'Delete task', Icons.delete_outline),
+      ],
     );
   }
 }
@@ -626,49 +956,94 @@ String _displayLink(Uri uri) => uri.hasQuery || uri.hasFragment
           '${uri.hasFragment ? '#${uri.fragment}' : ''}'
     : '${uri.host}${uri.path}';
 
+enum _PhoneDateAction {
+  today(DateShortcut.today, 'Today'),
+  tomorrow(DateShortcut.tomorrow, 'Tomorrow'),
+  nextWeek(DateShortcut.nextWeek, 'Next week'),
+  nextMonth(DateShortcut.nextMonth, 'Next month'),
+  clear(DateShortcut.clear, 'Clear date'),
+  calendar(null, 'Choose date');
+
+  const _PhoneDateAction(this.shortcut, this.label);
+  final DateShortcut? shortcut;
+  final String label;
+}
+
 final class _DateShortcutMenu extends StatelessWidget {
   const _DateShortcutMenu({
     required this.enabled,
     required this.task,
     required this.viewModel,
+    this.phoneLabel,
+    this.phoneSubtitle,
   });
 
   final bool enabled;
   final CachedTask task;
   final TaskDetailViewModel viewModel;
+  final String? phoneLabel;
+  final String? phoneSubtitle;
 
   @override
-  Widget build(BuildContext context) => MenuAnchor(
-    menuChildren: <Widget>[
-      for (final entry in const <(DateShortcut, String)>[
-        (DateShortcut.today, 'Today'),
-        (DateShortcut.tomorrow, 'Tomorrow'),
-        (DateShortcut.nextWeek, 'Next week'),
-        (DateShortcut.nextMonth, 'Next month'),
-        (DateShortcut.clear, 'Clear date'),
-      ])
+  Widget build(BuildContext context) {
+    if (phoneLabel != null) {
+      return PopupMenuButton<_PhoneDateAction>(
+        key: const Key('task-detail-due-action'),
+        tooltip: 'Change due date',
+        enabled: enabled,
+        position: PopupMenuPosition.under,
+        onSelected: (action) {
+          if (action.shortcut case final shortcut?) {
+            unawaited(viewModel.setDueShortcut(task.id, shortcut));
+          } else {
+            unawaited(showTaskDateDialog(context, viewModel, task));
+          }
+        },
+        itemBuilder: (_) => <PopupMenuEntry<_PhoneDateAction>>[
+          for (final action in _PhoneDateAction.values)
+            PopupMenuItem(value: action, child: Text(action.label)),
+        ],
+        child: ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+          leading: const Icon(Icons.event_outlined),
+          title: Text(phoneLabel!),
+          subtitle: phoneSubtitle == null ? null : Text(phoneSubtitle!),
+          trailing: const Icon(Icons.chevron_right),
+        ),
+      );
+    }
+    return MenuAnchor(
+      menuChildren: <Widget>[
+        for (final entry in const <(DateShortcut, String)>[
+          (DateShortcut.today, 'Today'),
+          (DateShortcut.tomorrow, 'Tomorrow'),
+          (DateShortcut.nextWeek, 'Next week'),
+          (DateShortcut.nextMonth, 'Next month'),
+          (DateShortcut.clear, 'Clear date'),
+        ])
+          MenuItemButton(
+            onPressed: enabled
+                ? () => unawaited(viewModel.setDueShortcut(task.id, entry.$1))
+                : null,
+            child: Text(entry.$2),
+          ),
         MenuItemButton(
           onPressed: enabled
-              ? () => unawaited(viewModel.setDueShortcut(task.id, entry.$1))
+              ? () => showTaskDateDialog(context, viewModel, task)
               : null,
-          child: Text(entry.$2),
+          child: const Text('Choose date'),
         ),
-      MenuItemButton(
+      ],
+      builder: (context, controller, _) => OutlinedButton.icon(
+        key: const Key('task-detail-due-action'),
         onPressed: enabled
-            ? () => showTaskDateDialog(context, viewModel, task)
+            ? () => controller.isOpen ? controller.close() : controller.open()
             : null,
-        child: const Text('Choose date'),
+        icon: const Icon(Icons.event_outlined),
+        label: const Text('Change due date'),
       ),
-    ],
-    builder: (context, controller, _) => OutlinedButton.icon(
-      key: const Key('task-detail-due-action'),
-      onPressed: enabled
-          ? () => controller.isOpen ? controller.close() : controller.open()
-          : null,
-      icon: const Icon(Icons.event_outlined),
-      label: const Text('Change due date'),
-    ),
-  );
+    );
+  }
 }
 
 /// The progress summary and subtask list of the details pane. Completed
@@ -833,52 +1208,38 @@ final class SubtaskList extends StatelessWidget {
                         : BorderSide.none,
                   ),
           ),
-          child: Row(
-            children: [
-              LongPressDraggable<TaskId>(
-                data: child.id,
-                onDragUpdate: (details) {
-                  final scrollable = Scrollable.maybeOf(context);
-                  final box = scrollable?.context.findRenderObject();
-                  if (scrollable == null || box is! RenderBox) return;
-                  final y = box.globalToLocal(details.globalPosition).dy;
-                  final delta = y < 48
-                      ? -32.0
-                      : y > box.size.height - 48
-                      ? 32.0
-                      : 0.0;
-                  final position = scrollable.position;
-                  if (delta != 0) {
-                    position.jumpTo(
-                      (position.pixels + delta).clamp(
-                        position.minScrollExtent,
-                        position.maxScrollExtent,
-                      ),
-                    );
-                  }
-                },
-                dragAnchorStrategy: pointerDragAnchorStrategy,
-                feedback: Material(
-                  elevation: 8,
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(child.title),
+          child: LongPressDraggable<TaskId>(
+            key: Key('touch-reorder-${child.id.value}'),
+            data: child.id,
+            onDragUpdate: (details) {
+              final scrollable = Scrollable.maybeOf(context);
+              final box = scrollable?.context.findRenderObject();
+              if (scrollable == null || box is! RenderBox) return;
+              final y = box.globalToLocal(details.globalPosition).dy;
+              final delta = y < 48
+                  ? -32.0
+                  : y > box.size.height - 48
+                  ? 32.0
+                  : 0.0;
+              final position = scrollable.position;
+              if (delta != 0) {
+                position.jumpTo(
+                  (position.pixels + delta).clamp(
+                    position.minScrollExtent,
+                    position.maxScrollExtent,
                   ),
-                ),
-                child: Tooltip(
-                  message: 'Drag to reorder ${child.title}',
-                  // Preserve the long press for dragging, not a tooltip.
-                  triggerMode: TooltipTriggerMode.manual,
-                  child: SizedBox(
-                    key: Key('touch-reorder-${child.id.value}'),
-                    width: 48,
-                    height: 48,
-                    child: const Icon(Icons.drag_handle),
-                  ),
-                ),
+                );
+              }
+            },
+            dragAnchorStrategy: pointerDragAnchorStrategy,
+            feedback: Material(
+              elevation: 8,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(child.title),
               ),
-              Expanded(child: _subtaskTile(context, index, child)),
-            ],
+            ),
+            child: _subtaskTile(context, index, child),
           ),
         ),
       ),
@@ -1101,6 +1462,13 @@ final class _TaskContentDialogState extends State<_TaskContentDialog> {
     animation: widget.viewModel,
     builder: (context, _) => AlertDialog(
       title: const Text('Edit task'),
+      scrollable: true,
+      insetPadding: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? const EdgeInsets.symmetric(horizontal: 16, vertical: 8)
+          : null,
+      actionsPadding: MediaQuery.viewInsetsOf(context).bottom > 0
+          ? const EdgeInsets.fromLTRB(16, 0, 16, 8)
+          : null,
       content: SizedBox(
         width: 480,
         child: SingleChildScrollView(
@@ -1339,6 +1707,31 @@ Widget? _subtaskSubtitle(CachedTask child) {
   ];
   if (values.isEmpty) return null;
   return Text(values.join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis);
+}
+
+({String title, String? subtitle}) _phoneDueText(
+  BuildContext context,
+  EffectiveDue due,
+  TaskDate today,
+) {
+  final effective = due.effective;
+  if (effective == null) return (title: 'Add date', subtitle: null);
+  String label(TaskDate date) {
+    if (date == today) return 'Today';
+    if (date == addTaskDateDays(today, 1)) return 'Tomorrow';
+    final value = MaterialLocalizations.of(context)
+        .formatMediumDate(DateTime.utc(date.year, date.month, date.day));
+    return date.year == today.year ? value : '$value, ${date.year}';
+  }
+
+  return (
+    title: label(effective),
+    subtitle: due.explicit == null
+        ? 'From subtasks'
+        : compareTaskDates(effective, due.explicit!) < 0
+        ? 'From subtasks · Task date ${label(due.explicit!)}'
+        : null,
+  );
 }
 
 String _effectiveDueLabel(EffectiveDue due) {

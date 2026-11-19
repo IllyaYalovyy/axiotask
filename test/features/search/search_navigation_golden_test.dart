@@ -38,6 +38,7 @@ void main() {
         MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: ThemeData(
+            platform: TargetPlatform.linux,
             brightness: brightness,
             colorSchemeSeed: const Color(0xff315da8),
             fontFamily: 'GoldenRoboto',
