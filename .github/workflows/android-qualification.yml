@@ -3,6 +3,9 @@ name: Retain physical Android qualification
 on:
   workflow_dispatch:
     inputs:
+      candidate_tag:
+        description: Existing release tag identifying the tested APK source
+        required: true
       release_tag:
         description: Draft release containing android-release-qualification.zip
         required: true
@@ -15,14 +18,25 @@ permissions:
 
 jobs:
   retain:
+    # GitHub requires write access to read unpublished draft releases.
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.candidate_tag }}
+          persist-credentials: false
+      - name: Resolve the exact candidate source
+        id: candidate
+        run: echo "source_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Download reviewed physical evidence
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ inputs.release_tag }}
           EVIDENCE_SHA256: ${{ inputs.evidence_sha256 }}
+          SOURCE_COMMIT: ${{ steps.candidate.outputs.source_commit }}
         run: |
           [[ "$EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
           gh release download "$RELEASE_TAG" --pattern android-release-qualification.zip
@@ -35,12 +49,12 @@ jobs:
                   assert (root / entry.filename).resolve().is_relative_to(root)
               archive.extractall(root)
           smoke = json.loads((root / 'smoke.json').read_text())
-          assert smoke['source_commit'] == os.environ['GITHUB_SHA']
+          assert smoke['source_commit'] == os.environ['SOURCE_COMMIT']
           assert smoke['execution_mode'] == 'signed-release-physical'
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: android-release-qualification-${{ github.sha }}
+          name: android-release-qualification-${{ steps.candidate.outputs.source_commit }}
           path: evidence/
           if-no-files-found: error
           retention-days: 30
