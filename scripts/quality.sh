@@ -31,6 +31,9 @@ printf 'Testing interactive capability gates...\n'
 printf 'Testing first-class Linux profile commands...\n'
 ./test/linux_app_test.sh
 
+printf 'Testing Linux screenshot process completion...\n'
+bash test/linux_capture_runner_test.sh
+
 printf 'Testing the privacy checker...\n'
 ./test/privacy_check_test.sh
 

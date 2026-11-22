@@ -51,7 +51,7 @@ scenarios=(
 )
 
 for scenario in "${scenarios[@]}"; do
-  flutter run -d linux --debug -t lib/main_health_screenshot.dart \
+  bash scripts/run_linux_capture.sh lib/main_health_screenshot.dart \
     --dart-define="AXIOTASK_SCREENSHOT_SCENARIO=$scenario"
 done
 
@@ -69,7 +69,7 @@ health_review_scenarios=(
 for width in 1024 1355; do
   for theme in light dark; do
     for scenario in "${health_review_scenarios[@]}"; do
-      flutter run -d linux --debug -t lib/main_health_screenshot.dart \
+      bash scripts/run_linux_capture.sh lib/main_health_screenshot.dart \
         --dart-define="AXIOTASK_SCREENSHOT_SCENARIO=$scenario" \
         --dart-define="AXIOTASK_SCREENSHOT_SIZE=${width}x800" \
         --dart-define="AXIOTASK_SCREENSHOT_THEME=$theme" \
@@ -78,6 +78,6 @@ for width in 1024 1355; do
   done
 done
 
-flutter run -d linux --debug -t lib/main_database_recovery_screenshot.dart
+bash scripts/run_linux_capture.sh lib/main_database_recovery_screenshot.dart
 
 printf 'Synthetic Linux screenshots written beneath screenshots/actual/.\n'

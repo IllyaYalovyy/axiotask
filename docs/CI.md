@@ -26,7 +26,13 @@ leave a download waiting indefinitely.
   A virtual display, disposable D-Bus session, software rendering, and a synthetic
   unlocked keyring support the native tests. Individual failures do not stop the
   remaining integration suites from running.
-- All `capture_linux_*_screenshots.sh` synthetic desktop capture scripts. Captures
+- All `capture_linux_*_screenshots.sh` synthetic desktop capture scripts. These
+  build each capture entry point and execute its binary directly, preserving
+  both build and capture exit failures. Attaching `flutter run` is deliberately
+  avoided: a capture can finish before the VM-service handshake and cause a
+  false failure or leave the launcher waiting. `linux_capture_runner_test.sh`
+  covers immediate completion, argument boundaries, and failure propagation.
+  Captures
   are evidence for human inspection; golden comparisons run in the Flutter suite.
 - SQLite, preferences and document-channel (account backup read/write)
   native integration probes on an Android API 36 emulator.
