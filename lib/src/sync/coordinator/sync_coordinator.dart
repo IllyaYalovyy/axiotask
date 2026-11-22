@@ -131,6 +131,7 @@ final class SyncCoordinator
     required this.run,
     this.diagnostics,
     this.taskDeleteEligibility,
+    this.startupSyncEnabled,
     LifecyclePort? lifecycle,
     ConnectivityPort? connectivity,
   }) : _connectivity = connectivity,
@@ -162,6 +163,11 @@ final class SyncCoordinator
   final CoordinatedSyncRun run;
   final DiagnosticSink? diagnostics;
   final TaskDeleteEligibilityStore? taskDeleteEligibility;
+
+  /// The device's "Auto-sync on startup" setting. When it answers false,
+  /// [start] restores state but requests no startup run; Refresh, local
+  /// edits and every later trigger still synchronize.
+  final Future<bool> Function()? startupSyncEnabled;
   final ConnectivityPort? _connectivity;
   final SyncRetryPolicy _retryPolicy;
   final StreamController<SyncRuntimeFacts> _facts =
@@ -191,6 +197,7 @@ final class SyncCoordinator
   Future<void>? _manualRetryOperation;
   Future<void>? _reauthorizationOperation;
   Future<void>? _localDataResetOperation;
+  Future<Outcome<void>>? _signOutOperation;
   RetryEpisode? _retryEpisode;
   bool _reauthorizationRequired = false;
   bool _started = false;
@@ -254,7 +261,27 @@ final class SyncCoordinator
       await _restoreRetryEpisode();
       return;
     }
+    final startupSetting = startupSyncEnabled;
+    if (startupSetting != null && !await _readStartupSetting(startupSetting)) {
+      _emit(
+        _with(
+          authorization: _authorizationFact(authorization.currentState),
+          activity: SyncActivity.idle,
+          verificationRequired: false,
+        ),
+      );
+      return;
+    }
     await _requestImmediate(SyncTrigger.startup);
+  }
+
+  Future<bool> _readStartupSetting(Future<bool> Function() setting) async {
+    try {
+      return await setting();
+    } on Object {
+      // An unreadable device preference must not silence synchronization.
+      return true;
+    }
   }
 
   Future<void> refresh() async {
@@ -445,6 +472,75 @@ final class SyncCoordinator
         _reauthorizationRequired = true;
         _emit(_inactiveAuthorization());
     }
+  }
+
+  /// Signs this device out of Google Tasks without discarding local data.
+  ///
+  /// Active and scheduled synchronization is cancelled first, then the
+  /// authorization adapter forgets its saved grant, and the durable
+  /// reauthorization latch is set so no run starts until the same account
+  /// signs in again through [reauthorize]. Cached tasks and pending local
+  /// changes stay exactly as they are. A failed credential deletion leaves
+  /// the account signed in and synchronization available.
+  Future<Outcome<void>> signOut() {
+    _requireOpen();
+    final existing = _signOutOperation;
+    if (existing != null) return existing;
+    final operation = _signOut();
+    _signOutOperation = operation;
+    unawaited(
+      operation.then<void>(
+        (_) => _signOutOperation = null,
+        onError: (Object _, StackTrace _) => _signOutOperation = null,
+      ),
+    );
+    return operation;
+  }
+
+  Future<Outcome<void>> _signOut() async {
+    final Object port = authorization;
+    if (port is! SignOutAuthorization) {
+      return const Outcome<void>.failure(_signOutUnavailableFailure);
+    }
+    final wasRequired = _reauthorizationRequired;
+    // Blocks every new trigger while the active run is being cancelled.
+    _reauthorizationRequired = true;
+    _activeGeneration += 1;
+    _pendingTriggers.clear();
+    _followUpTriggers.clear();
+    _cancelScheduledWork();
+    _activeControl?.requestCancellation();
+    await _settleConcurrentControlOperations();
+    final activeDrain = _drain;
+    if (activeDrain != null) {
+      try {
+        await activeDrain;
+      } on Object {
+        // The cancelled run's own failure projection is superseded below.
+      }
+    }
+    final Outcome<void> outcome;
+    try {
+      outcome = await port.signOut();
+    } on Object {
+      _reauthorizationRequired = wasRequired;
+      _scheduleCadence();
+      return const Outcome<void>.failure(_signOutFailedFailure);
+    }
+    if (outcome case Failed<void>()) {
+      _reauthorizationRequired = wasRequired;
+      _scheduleCadence();
+      return outcome;
+    }
+    try {
+      await reauthorizationStore.requireReauthorization(accountId);
+      await _clearRetryEpisode();
+    } on Object {
+      // The credential is gone; the next run fails authorization and sets
+      // the same latch, so the in-memory state below remains truthful.
+    }
+    _emit(_inactiveAuthorization());
+    return const Outcome<void>.success(null);
   }
 
   Future<void> stop() => _changeSyncEnabled(false);
@@ -1392,6 +1488,25 @@ SyncFailureReason _failureReason(Failure failure) => switch (failure.category) {
   FailureCategory.remote => SyncFailureReason.remoteFailure,
   _ => SyncFailureReason.applicationFailure,
 };
+
+const Failure _signOutUnavailableFailure = Failure(
+  code: 'auth.sign_out_unavailable',
+  category: FailureCategory.configuration,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.permanent,
+  impact: 'This device is still signed in to Google Tasks.',
+  safeSummary: 'This build cannot sign out of Google Tasks.',
+);
+
+const Failure _signOutFailedFailure = Failure(
+  code: 'auth.sign_out_failed',
+  category: FailureCategory.authorization,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.unknown,
+  impact: 'This device is still signed in to Google Tasks.',
+  action: FailureAction.retry,
+  safeSummary: 'The saved Google authorization could not be removed.',
+);
 
 const Failure _runTimeoutFailure = Failure(
   code: 'sync.run_timeout',

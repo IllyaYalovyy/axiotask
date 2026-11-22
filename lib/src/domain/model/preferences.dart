@@ -94,35 +94,98 @@ final class DesktopWorkspacePreferences {
   int get hashCode => Object.hash(navigationWidth, detailWidth);
 }
 
+/// Device-local on/off settings. Each is stored beside the other device
+/// preferences, never in the account database, so a schema-verified database
+/// is untouched by adding one.
+enum DeviceToggle {
+  /// Vibrate briefly on touch actions (complete, select, schedule, drag,
+  /// delete, undo). Touch devices only.
+  haptics('haptics', true),
+
+  /// Start task details with finished subtasks folded away.
+  collapseCompletedSubtasks('collapse_completed_subtasks', true),
+
+  /// Keep local edits on this device: synchronization reads Google Tasks but
+  /// publishes nothing.
+  readOnlySync('read_only_sync', false),
+
+  /// Synchronize when the application starts.
+  autoSyncOnStartup('auto_sync_on_startup', true);
+
+  const DeviceToggle(this.storageName, this.defaultValue);
+
+  /// Stable storage key suffix; never rename a released value.
+  final String storageName;
+  final bool defaultValue;
+}
+
 final class DevicePreferences {
   const DevicePreferences({
     required this.theme,
     required this.density,
     required this.onboardingDismissed,
     this.workspace = const DesktopWorkspacePreferences.defaults(),
+    this.haptics = true,
+    this.collapseCompletedSubtasks = true,
+    this.readOnlySync = false,
+    this.autoSyncOnStartup = true,
   });
 
   const DevicePreferences.defaults()
     : theme = ThemePreference.system,
       density = DensityPreference.standard,
       onboardingDismissed = false,
-      workspace = const DesktopWorkspacePreferences.defaults();
+      workspace = const DesktopWorkspacePreferences.defaults(),
+      haptics = true,
+      collapseCompletedSubtasks = true,
+      readOnlySync = false,
+      autoSyncOnStartup = true;
 
   final ThemePreference theme;
   final DensityPreference density;
   final bool onboardingDismissed;
   final DesktopWorkspacePreferences workspace;
+  final bool haptics;
+  final bool collapseCompletedSubtasks;
+  final bool readOnlySync;
+  final bool autoSyncOnStartup;
+
+  bool toggle(DeviceToggle toggle) => switch (toggle) {
+    DeviceToggle.haptics => haptics,
+    DeviceToggle.collapseCompletedSubtasks => collapseCompletedSubtasks,
+    DeviceToggle.readOnlySync => readOnlySync,
+    DeviceToggle.autoSyncOnStartup => autoSyncOnStartup,
+  };
+
+  DevicePreferences withToggle(DeviceToggle toggle, bool value) =>
+      switch (toggle) {
+        DeviceToggle.haptics => copyWith(haptics: value),
+        DeviceToggle.collapseCompletedSubtasks => copyWith(
+          collapseCompletedSubtasks: value,
+        ),
+        DeviceToggle.readOnlySync => copyWith(readOnlySync: value),
+        DeviceToggle.autoSyncOnStartup => copyWith(autoSyncOnStartup: value),
+      };
 
   DevicePreferences copyWith({
     ThemePreference? theme,
     DensityPreference? density,
     bool? onboardingDismissed,
     DesktopWorkspacePreferences? workspace,
+    bool? haptics,
+    bool? collapseCompletedSubtasks,
+    bool? readOnlySync,
+    bool? autoSyncOnStartup,
   }) => DevicePreferences(
     theme: theme ?? this.theme,
     density: density ?? this.density,
     onboardingDismissed: onboardingDismissed ?? this.onboardingDismissed,
     workspace: workspace ?? this.workspace,
+    haptics: haptics ?? this.haptics,
+    collapseCompletedSubtasks:
+        collapseCompletedSubtasks ?? this.collapseCompletedSubtasks,
+    readOnlySync: readOnlySync ?? this.readOnlySync,
+    autoSyncOnStartup: autoSyncOnStartup ?? this.autoSyncOnStartup,
   );
 
   @override
@@ -131,9 +194,21 @@ final class DevicePreferences {
       theme == other.theme &&
       density == other.density &&
       onboardingDismissed == other.onboardingDismissed &&
-      workspace == other.workspace;
+      workspace == other.workspace &&
+      haptics == other.haptics &&
+      collapseCompletedSubtasks == other.collapseCompletedSubtasks &&
+      readOnlySync == other.readOnlySync &&
+      autoSyncOnStartup == other.autoSyncOnStartup;
 
   @override
-  int get hashCode =>
-      Object.hash(theme, density, onboardingDismissed, workspace);
+  int get hashCode => Object.hash(
+    theme,
+    density,
+    onboardingDismissed,
+    workspace,
+    haptics,
+    collapseCompletedSubtasks,
+    readOnlySync,
+    autoSyncOnStartup,
+  );
 }

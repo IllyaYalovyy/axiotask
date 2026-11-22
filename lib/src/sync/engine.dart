@@ -32,6 +32,7 @@ final class SyncEngine {
     this.retryObserver = const NoopSyncRequestRetryObserver(),
     this.control = const NoopSyncRunControl(),
     this.diagnostics,
+    this.publishLocalChanges = true,
   }) : scheduler = scheduler ?? _schedulerFromClock(clock),
        retryPolicy = SyncRetryPolicy(random);
 
@@ -46,6 +47,11 @@ final class SyncEngine {
   final SyncRequestRetryObserver retryObserver;
   final SyncRunControl control;
   final DiagnosticSink? diagnostics;
+
+  /// False for the device's read-only sync setting: the run still reads and
+  /// reconciles Google Tasks, but claims no local create, update, move or
+  /// delete, so pending work stays durable and unpublished until re-enabled.
+  final bool publishLocalChanges;
 
   Future<SyncRunReport> run(SyncRunRequest request) async {
     final runDeadline =
@@ -582,7 +588,17 @@ final class SyncEngine {
     if (await phase(SyncRunPhase.executeOperations) case final interruption?) {
       return interruption;
     }
-    var stopOperations = false;
+    var stopOperations = !publishLocalChanges;
+    if (!publishLocalChanges) {
+      diagnostics?.record(
+        const DiagnosticEvent(
+          subsystem: DiagnosticSubsystem.sync,
+          kind: DiagnosticEventKind.transition,
+          code: 'sync.read_only_publication_skipped',
+          operation: 'execute_operations',
+        ),
+      );
+    }
     var createRecoveryIndex = 0;
     while (!stopOperations) {
       if (await interrupted(

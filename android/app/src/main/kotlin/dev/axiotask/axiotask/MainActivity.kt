@@ -20,6 +20,7 @@ class MainActivity : FlutterActivity() {
     private val main = Handler(Looper.getMainLooper())
     private val io: ExecutorService = Executors.newSingleThreadExecutor()
     private var pendingCreate: MethodChannel.Result? = null
+    private var pendingOpen: MethodChannel.Result? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -31,6 +32,8 @@ class MainActivity : FlutterActivity() {
         // A picker result can no longer reach the engine that asked for it.
         pendingCreate?.success(null)
         pendingCreate = null
+        pendingOpen?.success(null)
+        pendingOpen = null
         io.shutdown()
         super.onDestroy()
     }
@@ -42,6 +45,9 @@ class MainActivity : FlutterActivity() {
             "createDocument" -> createDocument(call, result)
             "writeDocument" -> writeDocument(call, result)
             "discardDocument" -> discardDocument(call, result)
+            "openDocument" -> openDocument(call, result)
+            "readDocument" -> readDocument(call, result)
+            "shareText" -> shareText(call, result)
             else -> result.notImplemented()
         }
     }
@@ -72,15 +78,111 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    // Account backup restore: the user picks an existing document from any
+    // provider; it is read through ContentResolver with no storage permission.
+    private fun openDocument(call: MethodCall, result: MethodChannel.Result) {
+        val mimeTypes = call.argument<List<String>>("mimeTypes")
+        if (mimeTypes.isNullOrEmpty()) {
+            result.error("invalid_arguments", "mimeTypes are required", null)
+            return
+        }
+        if (pendingOpen != null) {
+            result.error("busy", "A document picker is already open", null)
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = if (mimeTypes.size == 1) mimeTypes[0] else "*/*"
+            if (mimeTypes.size > 1) {
+                putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+            }
+        }
+        pendingOpen = result
+        try {
+            @Suppress("DEPRECATION")
+            startActivityForResult(intent, OPEN_DOCUMENT_REQUEST)
+        } catch (error: Exception) {
+            pendingOpen = null
+            result.error("picker_unavailable", error.javaClass.simpleName, null)
+        }
+    }
+
+    // Reads at most maxBytes; a larger document is refused rather than
+    // truncated, so a partial backup can never be imported.
+    private fun readDocument(call: MethodCall, result: MethodChannel.Result) {
+        val uri = call.argument<String>("uri")?.let(Uri::parse)
+        val maxBytes = call.argument<Number>("maxBytes")?.toInt()
+        if (uri == null || maxBytes == null || maxBytes <= 0) {
+            result.error("invalid_arguments", "uri and maxBytes are required", null)
+            return
+        }
+        io.execute {
+            try {
+                val stream = contentResolver.openInputStream(uri)
+                    ?: throw IllegalStateException("The provider returned no stream")
+                val output = java.io.ByteArrayOutputStream()
+                var tooLarge = false
+                stream.use {
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val read = it.read(buffer)
+                        if (read < 0) break
+                        if (output.size() + read > maxBytes) {
+                            tooLarge = true
+                            break
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+                if (tooLarge) {
+                    main.post { result.error("too_large", "The document exceeds the size limit", null) }
+                } else {
+                    val name = displayName(uri)
+                    val payload = mapOf("name" to name, "bytes" to output.toByteArray())
+                    main.post { result.success(payload) }
+                }
+            } catch (error: Exception) {
+                main.post { result.error("read_failed", error.javaClass.simpleName, null) }
+            }
+        }
+    }
+
+    // Current-view export through the system share sheet, as plain text.
+    private fun shareText(call: MethodCall, result: MethodChannel.Result) {
+        val text = call.argument<String>("text")
+        val subject = call.argument<String>("subject")
+        if (text == null) {
+            result.error("invalid_arguments", "text is required", null)
+            return
+        }
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, text)
+            if (!subject.isNullOrEmpty()) {
+                putExtra(Intent.EXTRA_SUBJECT, subject)
+                putExtra(Intent.EXTRA_TITLE, subject)
+            }
+        }
+        try {
+            startActivity(Intent.createChooser(send, subject))
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("share_unavailable", error.javaClass.simpleName, null)
+        }
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode != CREATE_DOCUMENT_REQUEST) {
+        if (requestCode != CREATE_DOCUMENT_REQUEST && requestCode != OPEN_DOCUMENT_REQUEST) {
             @Suppress("DEPRECATION")
             super.onActivityResult(requestCode, resultCode, data)
             return
         }
-        val result = pendingCreate ?: return
-        pendingCreate = null
+        val result = if (requestCode == CREATE_DOCUMENT_REQUEST) {
+            pendingCreate.also { pendingCreate = null }
+        } else {
+            pendingOpen.also { pendingOpen = null }
+        } ?: return
         val uri = data?.data
         result.success(if (resultCode == Activity.RESULT_OK && uri != null) uri.toString() else null)
     }
@@ -142,5 +244,6 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val DOCUMENT_EXPORT_CHANNEL = "dev.axiotask.axiotask/document_export"
         const val CREATE_DOCUMENT_REQUEST = 0x4158
+        const val OPEN_DOCUMENT_REQUEST = 0x4159
     }
 }

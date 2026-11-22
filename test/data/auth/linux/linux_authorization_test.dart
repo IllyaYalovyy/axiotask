@@ -50,6 +50,57 @@ void main() {
     );
 
     test(
+      'sign-out deletes the saved credential and ends the session',
+      () async {
+        final endpoint = StatefulTokenAndTasksEndpoint(<String>[]);
+        final credentials = MemoryCredentialStore();
+        final adapter = createAdapter(
+          endpoint: endpoint,
+          credentials: credentials,
+          subjects: MemoryPinnedSubjectStore(),
+        );
+        expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+        expect(credentials.bundle, isNotNull);
+        final states = <AuthorizationState>[];
+        final subscription = adapter.states.listen(states.add);
+        addTearDown(subscription.cancel);
+
+        final outcome = await adapter.signOut();
+        await Future<void>.value();
+
+        expect(outcome, isA<Success<void>>());
+        expect(credentials.bundle, isNull);
+        expect(adapter.currentState, isA<NoTasksAuthorization>());
+        expect(states.last, isA<NoTasksAuthorization>());
+        // Nothing is left to restore: the next start needs a fresh sign-in.
+        expect(
+          await adapter.restoreTasksAuthorization(),
+          isA<Failed<AccountSubject>>(),
+        );
+        // The same account can connect again.
+        expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+        expect(credentials.bundle, isNotNull);
+      },
+    );
+
+    test('a failed credential deletion keeps the session signed in', () async {
+      final endpoint = StatefulTokenAndTasksEndpoint(<String>[]);
+      final credentials = MemoryCredentialStore(failDelete: true);
+      final adapter = createAdapter(
+        endpoint: endpoint,
+        credentials: credentials,
+        subjects: MemoryPinnedSubjectStore(),
+      );
+      expect(await adapter.connect(), isA<Success<LinuxAuthorizedSession>>());
+
+      final outcome = await adapter.signOut();
+
+      expect(outcome, isA<Failed<void>>());
+      expect(credentials.bundle, isNotNull);
+      expect(adapter.currentState, isA<TasksAuthorized>());
+    });
+
+    test(
       'connects, validates identity, pins subject, persists, then lists tasks',
       () async {
         final ledger = <String>[];
@@ -897,11 +948,15 @@ final class HangingIdentityVerifier implements IdentityTokenVerifier {
 }
 
 final class MemoryCredentialStore implements CredentialStore {
-  MemoryCredentialStore({CredentialBundle? initial, this.failReplace = false})
-    : bundle = initial;
+  MemoryCredentialStore({
+    CredentialBundle? initial,
+    this.failReplace = false,
+    this.failDelete = false,
+  }) : bundle = initial;
 
   CredentialBundle? bundle;
   final bool failReplace;
+  final bool failDelete;
   int replaceCalls = 0;
 
   @override
@@ -929,6 +984,18 @@ final class MemoryCredentialStore implements CredentialStore {
 
   @override
   Future<Outcome<void>> delete() async {
+    if (failDelete) {
+      return const Outcome<void>.failure(
+        Failure(
+          code: 'auth.secure_store_test_failure',
+          category: FailureCategory.authorization,
+          operation: FailureOperation.write,
+          retry: RetryClassification.unknown,
+          impact: 'Saved authorization was not removed.',
+          safeSummary: 'Synthetic secure storage failed.',
+        ),
+      );
+    }
     bundle = null;
     return const Outcome<void>.success(null);
   }

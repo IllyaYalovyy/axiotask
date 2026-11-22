@@ -16,6 +16,8 @@ analyzer:
     - build/**
     - android/**
     - linux/**
+    # Ignored local release evidence; never part of the analysed project.
+    - test-results/**
 
 linter:
   rules:

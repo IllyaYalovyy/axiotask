@@ -1,3 +1,4 @@
+import 'package:axiotask/src/app/app_destinations.dart';
 import 'package:axiotask/src/app/visual_tokens.dart';
 import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/features/settings/settings_view.dart';
@@ -58,11 +59,174 @@ void main() {
     await tester.pump();
     expect(find.byKey(const Key('settings-failure')), findsNothing);
 
-    _scrollSettingsToEnd(tester);
+    await tester.scrollUntilVisible(
+      find.bySemanticsLabel('Compact density'),
+      120,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('settings-scroll')),
+        matching: find.byType(Scrollable),
+      ),
+    );
     await tester.pump();
     await tester.tap(find.bySemanticsLabel('Compact density'));
     await tester.pump();
     expect(preferences.densityWrites.single, DensityPreference.compact);
+  });
+
+  Future<void> reveal(WidgetTester tester, Finder finder) async {
+    await tester.scrollUntilVisible(
+      finder,
+      160,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('settings-scroll')),
+        matching: find.byType(Scrollable),
+      ),
+    );
+    await tester.pump();
+  }
+
+  testWidgets('each device setting is a switch that saves immediately', (
+    tester,
+  ) async {
+    final preferences = MemorySettingsPreferences();
+    addTearDown(preferences.close);
+    final viewModel = SettingsViewModel(preferences)..start();
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(_app(viewModel, platform: TargetPlatform.android));
+    await tester.pump();
+
+    for (final (key, toggle, expected) in <(String, DeviceToggle, bool)>[
+      (
+        'settings-collapse-completed',
+        DeviceToggle.collapseCompletedSubtasks,
+        false,
+      ),
+      ('settings-haptics', DeviceToggle.haptics, false),
+      ('settings-auto-sync-startup', DeviceToggle.autoSyncOnStartup, false),
+      ('settings-read-only-sync', DeviceToggle.readOnlySync, true),
+    ]) {
+      await reveal(tester, find.byKey(Key(key)));
+      await tester.tap(find.byKey(Key(key)));
+      await tester.pump();
+      expect(preferences.toggleWrites.last, (toggle, expected), reason: key);
+      expect(preferences.current.toggle(toggle), expected, reason: key);
+    }
+  });
+
+  testWidgets('leaving read-only sync asks before publishing', (tester) async {
+    final preferences = MemorySettingsPreferences(
+      current: const DevicePreferences.defaults().copyWith(readOnlySync: true),
+    );
+    addTearDown(preferences.close);
+    final viewModel = SettingsViewModel(preferences)..start();
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(_app(viewModel));
+    await tester.pump();
+    final toggle = find.byKey(const Key('settings-read-only-sync'));
+    await reveal(tester, toggle);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('settings-read-only-confirm')), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(preferences.toggleWrites, isEmpty);
+    expect(preferences.current.readOnlySync, isTrue);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const Key('settings-read-only-confirm-accept')),
+    );
+    await tester.pumpAndSettle();
+    expect(preferences.toggleWrites.single, (DeviceToggle.readOnlySync, false));
+    expect(preferences.current.readOnlySync, isFalse);
+  });
+
+  testWidgets('haptics is offered only where a haptic engine exists', (
+    tester,
+  ) async {
+    final preferences = MemorySettingsPreferences();
+    addTearDown(preferences.close);
+    final viewModel = SettingsViewModel(preferences)..start();
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(_app(viewModel));
+    await tester.pump();
+    await reveal(tester, find.byKey(const Key('settings-auto-sync-startup')));
+    expect(find.byKey(const Key('settings-haptics')), findsNothing);
+    expect(find.text('Feedback'), findsNothing);
+  });
+
+  testWidgets('a failed setting write keeps the previous value and says so', (
+    tester,
+  ) async {
+    final preferences = MemorySettingsPreferences()..failNextToggleWrite = true;
+    addTearDown(preferences.close);
+    final viewModel = SettingsViewModel(preferences)..start();
+    addTearDown(viewModel.dispose);
+    await tester.pumpWidget(_app(viewModel));
+    await tester.pump();
+    final toggle = find.byKey(const Key('settings-auto-sync-startup'));
+    await reveal(tester, toggle);
+    await tester.tap(toggle);
+    await tester.pump();
+
+    expect(preferences.current.autoSyncOnStartup, isTrue);
+    expect(viewModel.state.preferences.autoSyncOnStartup, isTrue);
+    expect(
+      viewModel.state.failureMessage,
+      'Auto-sync on startup setting could not be saved. Your previous '
+      'choice is still active.',
+    );
+  });
+
+  testWidgets('settings links open their destinations', (tester) async {
+    final preferences = MemorySettingsPreferences();
+    addTearDown(preferences.close);
+    final viewModel = SettingsViewModel(preferences)..start();
+    addTearDown(viewModel.dispose);
+    var supported = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: axiotaskTheme(
+          Brightness.light,
+          DensityPreference.standard,
+          platform: TargetPlatform.linux,
+        ),
+        home: SettingsView(
+          viewModel: viewModel,
+          destinations: AppDestinations(
+            about: (_) => const Scaffold(body: Text('about page')),
+            syncActivity: (_) => const Scaffold(body: Text('activity page')),
+            account: (_) => const Scaffold(body: Text('account page')),
+            supportProject: () => supported += 1,
+          ),
+          accountBackupBuilder: (_) =>
+              const Scaffold(body: Text('backup page')),
+          localDataRecoveryBuilder: (_) =>
+              const Scaffold(body: Text('recovery page')),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    for (final (key, page) in <(String, String)>[
+      ('settings-sync-activity', 'activity page'),
+      ('settings-account', 'account page'),
+      ('settings-account-backup', 'backup page'),
+      ('settings-local-data-recovery', 'recovery page'),
+      ('settings-about', 'about page'),
+    ]) {
+      await reveal(tester, find.byKey(Key(key)));
+      await tester.tap(find.byKey(Key(key)));
+      await tester.pumpAndSettle();
+      expect(find.text(page), findsOneWidget, reason: key);
+      Navigator.of(tester.element(find.text(page))).pop();
+      await tester.pumpAndSettle();
+    }
+    await reveal(tester, find.byKey(const Key('settings-support-project')));
+    await tester.tap(find.byKey(const Key('settings-support-project')));
+    expect(supported, 1);
   });
 
   testWidgets('settings remains readable and focusable at large text scale', (
@@ -96,7 +260,14 @@ void main() {
 
     expect(find.byKey(const Key('settings-scroll')), findsOneWidget);
     expect(find.bySemanticsLabel('System theme, selected'), findsOneWidget);
-    _scrollSettingsToEnd(tester);
+    await tester.scrollUntilVisible(
+      find.bySemanticsLabel('Compact density'),
+      120,
+      scrollable: find.descendant(
+        of: find.byKey(const Key('settings-scroll')),
+        matching: find.byType(Scrollable),
+      ),
+    );
     await tester.pump();
     await tester.tap(find.bySemanticsLabel('Compact density'));
     await tester.pump();
@@ -105,21 +276,14 @@ void main() {
   });
 }
 
-Widget _app(SettingsViewModel viewModel) => MaterialApp(
+Widget _app(
+  SettingsViewModel viewModel, {
+  TargetPlatform platform = TargetPlatform.linux,
+}) => MaterialApp(
   theme: axiotaskTheme(
     Brightness.light,
     DensityPreference.standard,
-    platform: TargetPlatform.linux,
+    platform: platform,
   ),
   home: SettingsView(viewModel: viewModel),
 );
-
-void _scrollSettingsToEnd(WidgetTester tester) {
-  final scrollable = tester.state<ScrollableState>(
-    find.descendant(
-      of: find.byKey(const Key('settings-scroll')),
-      matching: find.byType(Scrollable),
-    ),
-  );
-  scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
-}

@@ -15,6 +15,15 @@ abstract interface class ViewExportDestination {
   Future<ViewExportResult> save(ViewExportDocument document);
 }
 
+/// Hands a current-view export to another application through the platform
+/// share surface. Offered only where one exists (Android).
+abstract interface class ViewExportShare {
+  /// Opens the share surface for [document]. Completes once the surface is
+  /// showing; which application the user picks, if any, is not reported.
+  /// Throws [ViewExportDestinationException] when it cannot be opened.
+  Future<void> share(ViewExportDocument document);
+}
+
 sealed class ViewExportResult {
   const ViewExportResult();
 }

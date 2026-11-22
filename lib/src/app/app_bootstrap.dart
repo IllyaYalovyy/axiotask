@@ -8,7 +8,9 @@ import '../domain/model/tasks.dart';
 import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
 import '../sync/health/sync_health_repository.dart';
+import 'app_destinations.dart';
 import 'axiotask_app.dart';
+import 'haptics.dart';
 import 'tasks_feature_runtime.dart';
 
 typedef AxiotaskRuntimeOpener = Future<AxiotaskRuntime> Function();
@@ -19,6 +21,12 @@ typedef AccountBackupPageBuilder = Widget Function(
   AccountBackupRestoreRepository restoreRepository,
   SyncHealthRepository syncHealthRepository,
   Future<void> Function()? importCommitted,
+);
+
+/// Builds the application-level destinations for an opened runtime.
+typedef AppDestinationsBuilder = AppDestinations Function(
+  AxiotaskRuntime runtime,
+  WidgetBuilder? accountBackupBuilder,
 );
 typedef LocalDataRecoveryPageBuilder = Widget Function(
   BuildContext context,
@@ -34,9 +42,13 @@ final class AxiotaskBootstrap extends StatefulWidget {
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
+    this.destinationsBuilder,
+    this.hapticsDevice = const PlatformHaptics(),
     super.key,
   });
 
+  final AppDestinationsBuilder? destinationsBuilder;
+  final Haptics hapticsDevice;
   final AxiotaskRuntimeOpener openRuntime;
   final DiagnosticSink diagnostics;
   final WidgetBuilder? diagnosticsBuilder;
@@ -210,24 +222,29 @@ final class _AxiotaskBootstrapState extends State<AxiotaskBootstrap> {
       final restoreRepository = runtime.accountBackupRestoreRepository;
       final syncHealthRepository = runtime.syncHealthRepository;
       final localDataRecoveryService = runtime.localDataRecoveryService;
+      final WidgetBuilder? accountBackupBuilder =
+          repository == null ||
+              restoreRepository == null ||
+              syncHealthRepository == null ||
+              widget.accountBackupBuilder == null
+          ? null
+          : (context) => widget.accountBackupBuilder!(
+              context,
+              runtime.viewModel.accountId,
+              repository,
+              restoreRepository,
+              syncHealthRepository,
+              runtime.viewModel.localEditCommitted,
+            );
       return AxiotaskApp(
         viewModel: runtime.viewModel,
         preferencesRepository: runtime.preferencesRepository,
         diagnosticsBuilder: widget.diagnosticsBuilder,
-        accountBackupBuilder:
-            repository == null ||
-                restoreRepository == null ||
-                syncHealthRepository == null ||
-                widget.accountBackupBuilder == null
-            ? null
-            : (context) => widget.accountBackupBuilder!(
-                context,
-                runtime.viewModel.accountId,
-                repository,
-                restoreRepository,
-                syncHealthRepository,
-                runtime.viewModel.localEditCommitted,
-              ),
+        destinations:
+            widget.destinationsBuilder?.call(runtime, accountBackupBuilder) ??
+            const AppDestinations(),
+        hapticsDevice: widget.hapticsDevice,
+        accountBackupBuilder: accountBackupBuilder,
         localDataRecoveryBuilder:
             localDataRecoveryService == null ||
                 syncHealthRepository == null ||

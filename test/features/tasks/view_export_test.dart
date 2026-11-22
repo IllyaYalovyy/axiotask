@@ -287,6 +287,112 @@ void main() {
     await expectLater(pending, completes);
   });
 
+  test('the preview is exactly what Save writes', () async {
+    await open();
+    viewModel.selectTaskList(const TaskListId(10));
+    await pumpEventQueue();
+
+    final preview = viewModel.previewCurrentView(ViewExportFormat.markdown);
+    await viewModel.exportCurrentView(ViewExportFormat.markdown);
+
+    expect(destination.documents.single.text, preview.text);
+    expect(preview.taskCount, 3);
+    expect(tasks.mutations, 0);
+  });
+
+  test('copy puts the document on the clipboard and says so', () async {
+    tasks = _TasksRepository(_tasks);
+    final copied = <String>[];
+    final model = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: tasks,
+      syncHealthRepository: const _HealthRepository(),
+      clock: ManualClock(DateTime.utc(2026, 11, 15, 12)),
+      copyText: (text) async => copied.add(text),
+    );
+    addTearDown(model.dispose);
+    model.start();
+    await pumpEventQueue();
+    model.selectTaskList(const TaskListId(10));
+    await pumpEventQueue();
+
+    await model.copyCurrentView(ViewExportFormat.csv);
+
+    expect(copied.single, model.previewCurrentView(ViewExportFormat.csv).text);
+    expect(
+      model.state.transientFeedback?.message,
+      'Copied 3 tasks as CSV to the clipboard.',
+    );
+    expect(model.state.isExportPending, isFalse);
+    expect(tasks.mutations, 0);
+  });
+
+  test('a clipboard failure is reported and changes nothing', () async {
+    tasks = _TasksRepository(_tasks);
+    final model = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: tasks,
+      syncHealthRepository: const _HealthRepository(),
+      copyText: (_) async => throw StateError('synthetic clipboard'),
+    );
+    addTearDown(model.dispose);
+    model.start();
+    await pumpEventQueue();
+
+    await model.copyCurrentView(ViewExportFormat.markdown);
+
+    expect(
+      model.state.transientFeedback?.kind,
+      TransientTaskFeedbackKind.exportFailed,
+    );
+    expect(model.state.isExportPending, isFalse);
+    expect(tasks.mutations, 0);
+  });
+
+  test('share hands the displayed document to the share surface', () async {
+    tasks = _TasksRepository(_tasks);
+    final share = _RecordingShare();
+    final model = TasksViewModel(
+      accountId: const AccountId(1),
+      tasksRepository: tasks,
+      syncHealthRepository: const _HealthRepository(),
+      clock: ManualClock(DateTime.utc(2026, 11, 15, 12)),
+      viewExportShare: share,
+    );
+    addTearDown(model.dispose);
+    model.start();
+    await pumpEventQueue();
+    model.selectTaskList(const TaskListId(10));
+    await pumpEventQueue();
+
+    await model.shareCurrentView(ViewExportFormat.markdown);
+
+    expect(share.documents.single.title, 'Shopping');
+    expect(
+      share.documents.single.text,
+      model.previewCurrentView(ViewExportFormat.markdown).text,
+    );
+    // The system share sheet is its own feedback.
+    expect(model.state.transientFeedback, isNull);
+
+    share.error = const ViewExportDestinationException(
+      ViewExportFailure.pickerFailed,
+    );
+    await model.shareCurrentView(ViewExportFormat.markdown);
+    expect(
+      model.state.transientFeedback?.kind,
+      TransientTaskFeedbackKind.exportFailed,
+    );
+    expect(tasks.mutations, 0);
+  });
+
+  test('without a share surface, share does nothing', () async {
+    await open();
+    await viewModel.shareCurrentView(ViewExportFormat.csv);
+    expect(viewModel.state.transientFeedback, isNull);
+    expect(destination.documents, isEmpty);
+  });
+
   test('without a destination nothing is offered or attempted', () async {
     tasks = _TasksRepository(_tasks);
     final plain = TasksViewModel(
@@ -316,21 +422,41 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    Future<void> choose(WidgetTester tester, String key) async {
+    /// Opens the export sheet from the collection actions.
+    Future<void> openSheet(WidgetTester tester) async {
       await tester.tap(find.byKey(const Key('collection-actions-menu')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(Key(key)));
+      await tester.tap(find.byKey(const Key('collection-export')));
+      await tester.pumpAndSettle();
+    }
+
+    /// Opens the sheet, picks [format] and saves.
+    Future<void> save(WidgetTester tester, ViewExportFormat format) async {
+      await openSheet(tester);
+      await tester.tap(find.text(format.label));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('export-save')));
       await tester.pumpAndSettle();
     }
 
     testWidgets('offer both formats and report each outcome', (tester) async {
       await pumpPhone(tester);
       try {
-        await tester.tap(find.byKey(const Key('collection-actions-menu')));
-        await tester.pumpAndSettle();
-        expect(find.text('Export as Markdown…').hitTestable(), findsOneWidget);
-        expect(find.text('Export as CSV…').hitTestable(), findsOneWidget);
-        await tester.tap(find.text('Export as Markdown…'));
+        await openSheet(tester);
+        // Nothing leaves the app until the sheet is used.
+        expect(destination.documents, isEmpty);
+        expect(find.text('Markdown').hitTestable(), findsOneWidget);
+        expect(find.text('CSV').hitTestable(), findsOneWidget);
+        expect(find.text('3 tasks'), findsOneWidget);
+        expect(
+          tester
+              .widget<SelectableText>(
+                find.byKey(const Key('export-preview-text')),
+              )
+              .data,
+          contains('- [ ] Bread'),
+        );
+        await tester.tap(find.byKey(const Key('export-save')));
         await tester.pumpAndSettle();
 
         expect(destination.documents.single.format, ViewExportFormat.markdown);
@@ -345,7 +471,7 @@ void main() {
         );
 
         destination.next = () async => const ViewExportCancelled();
-        await choose(tester, 'collection-export-csv');
+        await save(tester, ViewExportFormat.csv);
         expect(destination.documents.last.format, ViewExportFormat.csv);
         expect(
           find.text('Export canceled. No file was written.'),
@@ -356,7 +482,7 @@ void main() {
             throw const ViewExportDestinationException(
               ViewExportFailure.writeFailed,
             );
-        await choose(tester, 'collection-export-csv');
+        await save(tester, ViewExportFormat.csv);
         expect(
           find.text(
             'The export could not be written to the chosen location. Your '
@@ -378,24 +504,23 @@ void main() {
       try {
         final release = Completer<ViewExportResult>();
         destination.next = () => release.future;
-        await choose(tester, 'collection-export-markdown');
+        await openSheet(tester);
+        await tester.tap(find.byKey(const Key('export-save')));
+        await tester.pump();
         expect(viewModel.state.isExportPending, isTrue);
 
-        await tester.tap(find.byKey(const Key('collection-actions-menu')));
-        await tester.pumpAndSettle();
-        expect(
-          tester
-              .widget<PopupMenuItem<Object?>>(
-                find.byKey(const Key('collection-export-csv')),
-              )
-              .enabled,
-          isFalse,
-        );
-        await tester.tapAt(const Offset(5, 5));
-        await tester.pumpAndSettle();
+        // The sheet stays up with every way out held until the picker answers.
+        for (final key in <String>['export-save', 'export-copy']) {
+          expect(
+            tester.widget<ButtonStyleButton>(find.byKey(Key(key))).onPressed,
+            isNull,
+            reason: '$key is disabled while a destination is being chosen',
+          );
+        }
 
         release.complete(const ViewExportCancelled());
         await tester.pumpAndSettle();
+        expect(find.byKey(const Key('export-sheet')), findsNothing);
         expect(destination.documents, hasLength(1));
         expect(viewModel.state.isExportPending, isFalse);
       } finally {
@@ -403,6 +528,17 @@ void main() {
       }
     });
   });
+}
+
+final class _RecordingShare implements ViewExportShare {
+  final documents = <ViewExportDocument>[];
+  Object? error;
+
+  @override
+  Future<void> share(ViewExportDocument document) async {
+    if (error case final error?) throw error;
+    documents.add(document);
+  }
 }
 
 /// Records each document and answers with [next].
@@ -646,6 +782,12 @@ final class _PreferencesRepository implements PreferencesRepository {
     mutations += 1;
     return const Outcome<void>.success(null);
   }
+
+  @override
+  Future<Outcome<void>> setDeviceToggle(
+    DeviceToggle toggle,
+    bool value,
+  ) async => const Outcome<void>.success(null);
 
   @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async {

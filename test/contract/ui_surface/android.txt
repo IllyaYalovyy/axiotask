@@ -1,0 +1,102 @@
+# User-facing controls of the android application, by screen.
+# Generated: flutter test test/contract/ui_surface_test.dart --update-goldens
+about | button: Back
+about | button: Donate
+about | button: Open-source licenses
+about | button: Source code
+account | button: Account backup
+account | button: Back
+account | button: Sign out
+account | button: Switch account…
+account-backup | button: Back
+account-backup | button: Choose backup to restore
+account-backup | button: Choose file and export
+app-menu | action: Dismiss menu
+app-menu | button: About Axiotask
+app-menu | button: Account
+app-menu | button: Account backup
+app-menu | button: Local data recovery
+app-menu | button: Refresh
+app-menu | button: Settings
+app-menu | button: Stop sync
+app-menu | button: Support the project
+app-menu | button: Sync activity
+collection-menu | action: Dismiss menu
+collection-menu | action: Show completed
+collection-menu | button: Add task with details
+collection-menu | button: Create Google task list
+collection-menu | button: Delete task list
+collection-menu | button: Export…
+collection-menu | button: Paste multiple tasks
+collection-menu | button: Rename task list
+collection-menu | button: Select tasks
+collection-menu | choice: Show completed
+export | action: Scrim
+export | button: CSV
+export | button: Cancel
+export | button: Copy
+export | button: Dismiss
+export | button: Markdown
+export | button: Save…
+export | button: Share…
+home | action: Verified synthetic task
+home | button: All, 1 task
+home | button: Collection actions
+home | button: Complete task
+home | button: Focus, 0 tasks
+home | button: Missed, 0 tasks
+home | button: More app actions
+home | button: New task
+home | button: Open navigation
+home | button: Search tasks
+home | button: Sort tasks
+home | button: Synchronization Synced
+home | button: Task actions for Verified synthetic task
+home | button: Unscheduled, 1 task
+home | button: Upcoming, 0 tasks
+local-data-recovery | button: Back
+local-data-recovery | button: Reset Local Data
+navigation | button: All
+navigation | button: Back to task collection
+navigation | button: Focus
+navigation | button: List view settings
+navigation | button: Missed
+navigation | button: More app actions
+navigation | button: Synchronization Synced
+navigation | button: Synthetic inbox
+navigation | button: Unscheduled
+navigation | button: Upcoming
+settings | button: About Axiotask
+settings | button: Account
+settings | button: Account backup
+settings | button: Back
+settings | button: Local data recovery
+settings | button: Support the project
+settings | button: Sync activity
+settings | choice: Compact density
+settings | choice: Dark theme
+settings | choice: Light theme
+settings | choice: Standard density
+settings | choice: System theme
+settings | switch: Auto-sync on startup
+settings | switch: Collapse completed subtasks
+settings | switch: Haptics
+settings | switch: Read-only sync
+sync-activity | button: Back
+task-details | action: Add date
+task-details | action: Google Tasks
+task-details | button: Add subtask
+task-details | button: Back to task collection
+task-details | button: Complete selected task
+task-details | button: Task actions
+task-details | field: Task notes
+task-details | field: Task title
+task-row-menu | action: Dismiss menu
+task-row-menu | button: Choose date…
+task-row-menu | button: Complete task
+task-row-menu | button: Delete task
+task-row-menu | button: Edit task…
+task-row-menu | button: Move down
+task-row-menu | button: Move to list…
+task-row-menu | button: Move up
+task-row-menu | button: Open details

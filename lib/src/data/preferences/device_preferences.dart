@@ -108,6 +108,8 @@ abstract interface class DevicePreferencesStore {
 
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed);
 
+  Future<Outcome<void>> setDeviceToggle(DeviceToggle toggle, bool value);
+
   Future<Outcome<void>> setWorkspacePreferences(
     DesktopWorkspacePreferences preferences,
   );
@@ -139,6 +141,7 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
   String get _densityKey => '$_namespace.density';
   String get _onboardingKey => '$_namespace.onboarding_dismissed';
   String get _workspaceKey => '$_namespace.desktop_workspace';
+  String _toggleKey(DeviceToggle toggle) => '$_namespace.${toggle.storageName}';
 
   @override
   Stream<DevicePreferences> watch() {
@@ -201,6 +204,17 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
   }
 
   @override
+  Future<Outcome<void>> setDeviceToggle(DeviceToggle toggle, bool value) async {
+    await _initialize();
+    final current = _current!;
+    return _write(
+      preference: toggle.storageName,
+      write: () => _backend.writeBool(_toggleKey(toggle), value),
+      next: current.withToggle(toggle, value),
+    );
+  }
+
+  @override
   Future<Outcome<void>> setWorkspacePreferences(
     DesktopWorkspacePreferences preferences,
   ) async {
@@ -251,12 +265,23 @@ final class DevicePreferencesAdapter implements DevicePreferencesStore {
       fallback: false,
     );
     final workspace = await _readWorkspace();
-    return DevicePreferences(
+    var preferences = DevicePreferences(
       theme: theme,
       density: density,
       onboardingDismissed: onboardingDismissed,
       workspace: workspace,
     );
+    for (final toggle in DeviceToggle.values) {
+      preferences = preferences.withToggle(
+        toggle,
+        await _readBool(
+          preference: toggle.storageName,
+          key: _toggleKey(toggle),
+          fallback: toggle.defaultValue,
+        ),
+      );
+    }
+    return preferences;
   }
 
   Future<DesktopWorkspacePreferences> _readWorkspace() async {

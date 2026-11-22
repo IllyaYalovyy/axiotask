@@ -106,6 +106,12 @@ final class _Preferences implements PreferencesRepository {
   }
 
   @override
+  Future<Outcome<void>> setDeviceToggle(
+    DeviceToggle toggle,
+    bool value,
+  ) async => const Outcome<void>.success(null);
+
+  @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async {
     if (failDismissal) {
       return const Outcome<void>.failure(_writeFailure);

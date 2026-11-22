@@ -51,6 +51,21 @@ final class MemorySettingsPreferences implements PreferencesRepository {
     return const Outcome<void>.success(null);
   }
 
+  final List<(DeviceToggle, bool)> toggleWrites = <(DeviceToggle, bool)>[];
+  bool failNextToggleWrite = false;
+
+  @override
+  Future<Outcome<void>> setDeviceToggle(DeviceToggle toggle, bool value) async {
+    toggleWrites.add((toggle, value));
+    if (failNextToggleWrite) {
+      failNextToggleWrite = false;
+      return const Outcome<void>.failure(settingsWriteFailure);
+    }
+    current = current.withToggle(toggle, value);
+    _changes.add(current);
+    return const Outcome<void>.success(null);
+  }
+
   @override
   Future<Outcome<void>> setWorkspacePreferences(
     DesktopWorkspacePreferences preferences,

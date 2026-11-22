@@ -85,6 +85,7 @@ linux_bundle_path() {
 
 supported_linux_integrations=(
   integration_test/account_backup_linux_test.dart
+  integration_test/android_document_channel_probe_test.dart
   integration_test/bulk_capture_linux_test.dart
   integration_test/bulk_operations_linux_test.dart
   integration_test/create_publish_linux_test.dart

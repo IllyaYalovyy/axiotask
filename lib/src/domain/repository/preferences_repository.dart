@@ -46,6 +46,8 @@ abstract interface class PreferencesRepository {
 
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed);
 
+  Future<Outcome<void>> setDeviceToggle(DeviceToggle toggle, bool value);
+
   Future<Outcome<void>> setWorkspacePreferences(
     DesktopWorkspacePreferences preferences,
   );

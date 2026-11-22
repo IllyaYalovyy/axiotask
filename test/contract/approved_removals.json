@@ -1,0 +1,6 @@
+{
+    "schema": 1,
+    "about": "Owner-approved removals of must-have features or user-facing controls. Each entry needs the removed id or control, the release it was removed in, and the owner approval reference (for example the ktask task whose Goal explicitly orders the removal). The contract ratchet fails for any removal not listed here.",
+    "removed_features": [],
+    "removed_controls": []
+}

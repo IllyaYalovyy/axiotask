@@ -1,5 +1,6 @@
 import 'dart:async';
-import 'dart:io';
+
+import 'package:flutter/foundation.dart';
 
 import '../core/diagnostics/diagnostics.dart';
 import '../core/failure.dart';
@@ -12,22 +13,27 @@ import '../data/database/app_database.dart';
 import '../data/database/delete_state_dao.dart';
 import '../data/database/production_database.dart';
 import '../data/database/read_sync_store.dart';
+import '../data/database/sync_activity_repository.dart';
 import '../data/database/sync_health_dao.dart';
 import '../data/database/sync_health_repository.dart';
 import '../data/database/sync_settings_repository.dart';
 import '../data/database/task_lists_repository.dart';
 import '../data/database/tasks_repository.dart';
 import '../data/export/android_document_export_destination.dart';
+import '../data/export/android_view_export_share.dart';
 import '../data/export/file_view_export_destination.dart';
 import '../data/links/url_launcher_adapter.dart';
 import '../data/preferences/device_preferences.dart';
 import '../data/preferences/preferences_repository.dart';
 import '../data/preferences/relational_preferences.dart';
 import '../domain/commands/task_commands.dart';
+import '../domain/model/preferences.dart';
 import '../domain/model/tasks.dart';
 import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
+import '../domain/repository/account_session.dart';
 import '../domain/repository/preferences_repository.dart';
+import '../domain/repository/sync_activity_repository.dart';
 import '../domain/repository/tasks_repository.dart';
 import '../domain/repository/view_export_destination.dart';
 import '../features/tasks/tasks_view_model.dart';
@@ -52,6 +58,12 @@ abstract interface class AxiotaskRuntime {
   LocalDataRecoveryService? get localDataRecoveryService => null;
 
   PreferencesRepository? get preferencesRepository => null;
+
+  /// The per-run synchronization history; absent before an account exists.
+  SyncActivityRepository? get syncActivityRepository => null;
+
+  /// Sign-out and account switching; absent before an account exists.
+  AccountSession? get accountSession => null;
 
   Stream<Object> get fatalStorageFailures;
 
@@ -81,7 +93,18 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.syncHealthRepository,
     required this.localDataRecoveryService,
     required this.preferencesRepository,
+    this.syncActivityRepository,
+    this.accountSession,
+    this._preferenceSubscription,
   });
+
+  @override
+  final SyncActivityRepository? syncActivityRepository;
+
+  @override
+  final AccountSession? accountSession;
+
+  final StreamSubscription<DevicePreferences>? _preferenceSubscription;
 
   @override
   final TasksViewModel viewModel;
@@ -184,6 +207,9 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
 
       final accountId = AccountId(accounts.first.id);
       final subject = AccountSubject(accounts.first.googleSubject);
+      final openedDevicePreferences = devicePreferences;
+      final accountReload = Completer<void>();
+      reloadRequest = accountReload;
       await DeleteStateDao(database).cleanupExpiredTaskDeletes(
         accountId: accountId,
         now: composition.clock.now().toUtc(),
@@ -203,8 +229,12 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
         taskDeleteEligibility: _DatabaseTaskDeleteEligibilityStore(database),
         lifecycle: lifecycle,
         connectivity: connectivity,
+        startupSyncEnabled: () async =>
+            (await openedDevicePreferences.watch().first).autoSyncOnStartup,
         run: (request) async {
           try {
+            final readOnly =
+                (await openedDevicePreferences.watch().first).readOnlySync;
             return await SyncEngine(
               store: syncStore,
               googleTasks: openedTransport.googleTasks,
@@ -215,6 +245,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
               retryObserver: request.retryObserver,
               control: request.control,
               diagnostics: composition.diagnostics,
+              publishLocalChanges: !readOnly,
             ).run(
               SyncRunRequest(
                 accountId: accountId,
@@ -255,7 +286,27 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
               accountGuard: composition.accountGuard,
               subject: subject,
             );
+      // Leaving read-only mode publishes the changes held back meanwhile.
+      bool? wasReadOnly;
+      final preferenceSubscription = openedDevicePreferences.watch().listen((
+        preferences,
+      ) {
+        final previous = wasReadOnly;
+        wasReadOnly = preferences.readOnlySync;
+        if (previous == true && !preferences.readOnlySync) {
+          unawaited(coordinator.localEditCommitted().catchError((Object _) {}));
+        }
+      }, onError: (Object _) {});
       return TasksFeatureRuntime._(
+        syncActivityRepository: DatabaseSyncActivityRepository(database),
+        accountSession: _RuntimeAccountSession(
+          accountId: accountId,
+          database: database,
+          coordinator: coordinator,
+          reloadRequest: accountReload,
+          diagnostics: composition.diagnostics,
+        ),
+        preferenceSubscription: preferenceSubscription,
         viewModel: TasksViewModel(
           accountId: accountId,
           tasksRepository: DatabaseTasksRepository(
@@ -279,13 +330,16 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           diagnostics: composition.diagnostics,
           externalLinkLauncher: const UrlLauncherAdapter(),
           viewExportDestination: _platformViewExportDestination(),
+          viewExportShare: defaultTargetPlatform == TargetPlatform.android
+              ? const AndroidViewExportShare()
+              : null,
         ),
         database: database,
         coordinator: coordinator,
         transport: openedTransport,
         devicePreferences: devicePreferences,
         storageFailures: storageFailures,
-        reloadRequest: null,
+        reloadRequest: accountReload,
         closeFirstAccountHealth: null,
         accountBackupRepository: backupRepository,
         accountBackupRestoreRepository: backupRepository,
@@ -313,6 +367,7 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     // Inline detail edits still waiting for their debounce are stored
     // before the database closes.
     await viewModel.flushPendingEdits();
+    await _preferenceSubscription?.cancel();
     viewModel.dispose();
     await coordinator?.close();
     await transport?.close();
@@ -322,6 +377,84 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     await storageFailures.close();
   }
 }
+
+/// Sign-out and account switching for the configured account.
+final class _RuntimeAccountSession implements AccountSession {
+  _RuntimeAccountSession({
+    required this.accountId,
+    required this.database,
+    required this.coordinator,
+    required this.reloadRequest,
+    required this.diagnostics,
+  });
+
+  final AccountId accountId;
+  final AppDatabase database;
+  final SyncCoordinator coordinator;
+  final Completer<void> reloadRequest;
+  final DiagnosticSink diagnostics;
+
+  @override
+  Future<Outcome<void>> signOut() async {
+    final outcome = await coordinator.signOut();
+    _record('account.signed_out', outcome);
+    return outcome;
+  }
+
+  @override
+  Future<Outcome<void>> switchAccount() async {
+    final signedOut = await coordinator.signOut();
+    if (signedOut case Failed<void>()) {
+      _record('account.switch_started', signedOut);
+      return signedOut;
+    }
+    try {
+      // The account row's audited cascading foreign keys remove the whole
+      // partition, exactly as Reset Local Data relies on.
+      await (database.delete(
+        database.accounts,
+      )..where((row) => row.id.equals(accountId.value))).go();
+    } on Object {
+      _record(
+        'account.switch_started',
+        const Outcome<void>.failure(_accountRemovalFailure),
+      );
+      return const Outcome<void>.failure(_accountRemovalFailure);
+    }
+    _record('account.switch_started', const Outcome<void>.success(null));
+    if (!reloadRequest.isCompleted) reloadRequest.complete();
+    return const Outcome<void>.success(null);
+  }
+
+  void _record(String code, Outcome<void> outcome) {
+    diagnostics.record(
+      DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.authorization,
+        kind: outcome is Failed<void>
+            ? DiagnosticEventKind.failure
+            : DiagnosticEventKind.transition,
+        code: code,
+        operation: 'account_session',
+        fields: <DiagnosticField>[
+          if (outcome case Failed<void>(:final failure))
+            DiagnosticField.safe('failure_code', failure.code),
+        ],
+      ),
+    );
+  }
+}
+
+const Failure _accountRemovalFailure = Failure(
+  code: 'account.local_copy_remove_failed',
+  category: FailureCategory.persistence,
+  operation: FailureOperation.write,
+  retry: RetryClassification.unknown,
+  impact:
+      'This device is signed out, but its local copy of the account is '
+      'still stored.',
+  action: FailureAction.retry,
+  safeSummary: 'The local account copy could not be removed.',
+);
 
 Future<Outcome<void>> _connectFirstAccount({
   required AppComposition composition,
@@ -605,8 +738,12 @@ const Failure _unexpectedAuthorizationFailure = Failure(
 /// The current-view export destination this platform supports: the Storage
 /// Access Framework document picker on Android, the native save dialog on
 /// Linux. Elsewhere no export is offered.
-ViewExportDestination? _platformViewExportDestination() {
-  if (Platform.isAndroid) return AndroidDocumentExportDestination();
-  if (Platform.isLinux) return const FileViewExportDestination();
-  return null;
-}
+///
+/// Chosen from the target platform, not the host operating system, so the
+/// must-have feature contract exercises each platform's wiring.
+ViewExportDestination? _platformViewExportDestination() =>
+    switch (defaultTargetPlatform) {
+      TargetPlatform.android => AndroidDocumentExportDestination(),
+      TargetPlatform.linux => const FileViewExportDestination(),
+      _ => null,
+    };

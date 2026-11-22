@@ -35,6 +35,35 @@ void main() {
   tearDown(() => authorization.close());
 
   test(
+    'sign-out clears the token and ends the Play Services session',
+    () async {
+      await authorization.requestTasksAuthorization();
+      final states = <AuthorizationState>[];
+      final subscription = authorization.states.listen(states.add);
+      addTearDown(subscription.cancel);
+
+      final outcome = await authorization.signOut();
+      await Future<void>.value();
+
+      expect(outcome, isA<Success<void>>());
+      expect(gateway.cleared, ['token-1']);
+      expect(gateway.signOuts, 1);
+      expect(authorization.currentState, isA<NoTasksAuthorization>());
+      expect(states.last, isA<NoTasksAuthorization>());
+    },
+  );
+
+  test('a Play Services sign-out failure is reported, not swallowed', () async {
+    await authorization.requestTasksAuthorization();
+    gateway.signOutError = StateError('synthetic');
+
+    final outcome = await authorization.signOut();
+
+    expect((outcome as Failed<void>).failure.code, 'auth.sign_out_failed');
+    expect(gateway.signOuts, 0);
+  });
+
+  test(
     'interactive authorization verifies identity before accepting a grant',
     () async {
       final states = <AuthorizationState>[];
@@ -269,4 +298,13 @@ class _Gateway implements AndroidAuthorizationGateway {
 
   @override
   Future<void> clearToken(String token) async => cleared.add(token);
+
+  int signOuts = 0;
+  Object? signOutError;
+
+  @override
+  Future<void> signOut() async {
+    if (signOutError case final error?) throw error;
+    signOuts += 1;
+  }
 }

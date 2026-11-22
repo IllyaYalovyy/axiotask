@@ -1,7 +1,7 @@
 import 'package:flutter/gestures.dart';
-import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../../../app/haptics.dart';
 import '../../../app/navigation_state.dart';
 import '../../../domain/policy/date_workflow.dart';
 
@@ -87,7 +87,7 @@ final class _TaskSwipeActionsState extends State<TaskSwipeActions> {
       _drift = (details.globalPosition.dy - origin.dy).abs();
     }
     final armed = _actionAt(travel) != null;
-    if (armed && !_armed) HapticFeedback.selectionClick();
+    if (armed && !_armed) HapticsScope.of(context).tick();
     setState(() {
       _travel = travel;
       _armed = armed;

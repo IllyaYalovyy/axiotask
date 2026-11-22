@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../../app/device_preferences_scope.dart';
 import '../../../app/navigation_state.dart';
 import '../../../domain/commands/task_commands.dart';
 import '../../../domain/model/tasks.dart';
@@ -1046,8 +1047,9 @@ final class _DateShortcutMenu extends StatelessWidget {
   }
 }
 
-/// The progress summary and subtask list of the details pane. Completed
-/// subtasks are hidden by default; a toggle shows and hides them again.
+/// The progress summary and subtask list of the details pane. Whether
+/// completed subtasks start folded away follows the persistent "Collapse
+/// completed subtasks" setting; a toggle shows and hides them for this task.
 final class _SubtasksBody extends StatefulWidget {
   const _SubtasksBody({
     required this.viewModel,
@@ -1065,10 +1067,15 @@ final class _SubtasksBody extends StatefulWidget {
 }
 
 final class _SubtasksBodyState extends State<_SubtasksBody> {
-  bool _showCompleted = false;
+  /// The user's choice for this task while it is open; `null` follows the
+  /// persistent "Collapse completed subtasks" setting.
+  bool? _showCompletedOverride;
 
   @override
   Widget build(BuildContext context) {
+    final collapse = DevicePreferencesScope.of(context)
+        .collapseCompletedSubtasks;
+    final showCompleted = _showCompletedOverride ?? !collapse;
     final completedCount = widget.children
         .where((child) => child.status == TaskStatus.completed)
         .length;
@@ -1079,13 +1086,14 @@ final class _SubtasksBodyState extends State<_SubtasksBody> {
         if (completedCount > 0)
           TextButton.icon(
             key: const Key('toggle-completed-subtasks'),
-            onPressed: () => setState(() => _showCompleted = !_showCompleted),
+            onPressed: () =>
+                setState(() => _showCompletedOverride = !showCompleted),
             icon: Icon(
-              _showCompleted ? Icons.visibility_off : Icons.visibility,
+              showCompleted ? Icons.visibility_off : Icons.visibility,
               size: 18,
             ),
             label: Text(
-              _showCompleted
+              showCompleted
                   ? 'Hide completed subtasks'
                   : 'Show $completedCount completed '
                         '${completedCount == 1 ? 'subtask' : 'subtasks'}',
@@ -1095,7 +1103,7 @@ final class _SubtasksBodyState extends State<_SubtasksBody> {
         SubtaskList(
           viewModel: widget.viewModel,
           children: widget.children,
-          showCompleted: _showCompleted,
+          showCompleted: showCompleted,
         ),
       ],
     );

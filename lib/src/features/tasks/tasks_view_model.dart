@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
@@ -342,6 +343,8 @@ final class TasksViewModel extends ChangeNotifier {
     this.diagnostics,
     this.externalLinkLauncher = const UnavailableExternalLinkLauncher(),
     this.viewExportDestination,
+    this.viewExportShare,
+    this.copyText = _copyToClipboard,
   }) : clock = clock ?? SystemClock(),
        calendarScheduler =
            calendarScheduler ??
@@ -397,6 +400,13 @@ final class TasksViewModel extends ChangeNotifier {
   /// Where current-view Markdown/CSV exports are saved; without one the
   /// export actions are not offered.
   final ViewExportDestination? viewExportDestination;
+
+  /// The platform share surface for a current-view export; `null` where the
+  /// platform has none (desktop).
+  final ViewExportShare? viewExportShare;
+
+  /// Puts text on the system clipboard.
+  final Future<void> Function(String text) copyText;
   TasksViewState _state;
   StreamSubscription<CachedTasksSnapshot>? _tasksSubscription;
   StreamSubscription<SyncHealth>? _healthSubscription;
@@ -706,6 +716,27 @@ final class TasksViewModel extends ChangeNotifier {
     }
   }
 
+  /// Whether the collection can leave the app at all: copied, saved or
+  /// shared. Copy needs no platform destination, so this is true wherever
+  /// tasks are shown.
+  bool get canExportCurrentView => true;
+
+  /// The collection exactly as displayed — its view, completed filter and
+  /// sort, with each shown task's subtasks — rendered as [format]. Pure: this
+  /// is what the export sheet previews and what Copy, Save and Share deliver.
+  ViewExportDocument previewCurrentView(ViewExportFormat format) {
+    final state = _state;
+    return buildViewExport(
+      title: state.selectedViewTitle,
+      rows: state.visibleTasks,
+      tasks: state.tasks,
+      taskLists: state.taskLists,
+      showCompleted: state.selectedViewPreferences.showCompleted,
+      format: format,
+      today: state.today,
+    );
+  }
+
   /// Exports the collection exactly as displayed — its view, completed filter
   /// and sort, with each shown task's subtasks — as [format], and saves it
   /// where the user chooses. Only reads state: no task, preference or sync
@@ -717,19 +748,86 @@ final class TasksViewModel extends ChangeNotifier {
     if (destination == null) return Future<void>.value();
     // The snapshot is taken now, so the file holds what the user was looking
     // at when they chose to export, even if a sync lands while they pick.
-    final state = _state;
-    final document = buildViewExport(
-      title: state.selectedViewTitle,
-      rows: state.visibleTasks,
-      tasks: state.tasks,
-      taskLists: state.taskLists,
-      showCompleted: state.selectedViewPreferences.showCompleted,
-      format: format,
-      today: state.today,
-    );
-    final operation = _performExport(destination, document);
+    final operation = _performExport(destination, previewCurrentView(format));
     _exportInFlight = operation;
     return operation;
+  }
+
+  /// Copies the displayed collection, as [format], to the clipboard.
+  Future<void> copyCurrentView(ViewExportFormat format) {
+    final existing = _exportInFlight;
+    if (existing != null) return existing;
+    final document = previewCurrentView(format);
+    final operation = _deliverExport(
+      successCode: 'ui.view_export_copied',
+      deliver: () async {
+        await copyText(document.text);
+        return TransientTaskFeedback.export(
+          TransientTaskFeedbackKind.exported,
+          'Copied ${_taskCountPhrase(document.taskCount)} as '
+          '${document.format.label} to the clipboard.',
+        );
+      },
+      failureMessage:
+          'The export could not be copied to the clipboard. Your tasks are '
+          'unchanged.',
+    );
+    _exportInFlight = operation;
+    return operation;
+  }
+
+  /// Hands the displayed collection, as [format], to the platform share
+  /// surface. A no-op where the platform has none.
+  Future<void> shareCurrentView(ViewExportFormat format) {
+    final existing = _exportInFlight;
+    if (existing != null) return existing;
+    final share = viewExportShare;
+    if (share == null) return Future<void>.value();
+    final document = previewCurrentView(format);
+    final operation = _deliverExport(
+      successCode: 'ui.view_export_shared',
+      deliver: () async {
+        await share.share(document);
+        // The system share sheet is its own feedback.
+        return null;
+      },
+      failureMessage:
+          'Sharing could not be opened. Nothing was shared; your tasks are '
+          'unchanged.',
+    );
+    _exportInFlight = operation;
+    return operation;
+  }
+
+  Future<void> _deliverExport({
+    required String successCode,
+    required Future<TransientTaskFeedback?> Function() deliver,
+    required String failureMessage,
+  }) async {
+    _replaceState(_state.copyWith(isExportPending: true));
+    TransientTaskFeedback? feedback;
+    try {
+      feedback = await deliver();
+      _recordUi(successCode, DiagnosticEventKind.transition);
+    } on Object catch (error) {
+      final failure = error is ViewExportDestinationException
+          ? error.failure
+          : ViewExportFailure.writeFailed;
+      _recordUi(
+        'ui.view_export_failed',
+        DiagnosticEventKind.failure,
+        failureCode: 'view_export.${failure.name}',
+      );
+      feedback = TransientTaskFeedback.export(
+        TransientTaskFeedbackKind.exportFailed,
+        failureMessage,
+      );
+    } finally {
+      _exportInFlight = null;
+    }
+    if (_disposed) return;
+    _replaceState(_state.copyWith(isExportPending: false));
+    if (feedback != null) _showTransientFeedback(feedback);
   }
 
   Future<void> _performExport(
@@ -1786,6 +1884,9 @@ final class TasksViewModel extends ChangeNotifier {
     super.dispose();
   }
 }
+
+Future<void> _copyToClipboard(String text) =>
+    Clipboard.setData(ClipboardData(text: text));
 
 String _taskCountPhrase(int count) => count == 1 ? '1 task' : '$count tasks';
 

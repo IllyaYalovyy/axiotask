@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/app_destinations.dart';
+import '../../app/haptics.dart';
 import '../../app/visual_tokens.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../domain/model/preferences.dart';
@@ -12,11 +14,17 @@ final class SettingsPage extends StatefulWidget {
   const SettingsPage({
     required this.preferencesRepository,
     this.diagnostics,
+    this.destinations = const AppDestinations(),
+    this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
     super.key,
   });
 
   final PreferencesRepository preferencesRepository;
   final DiagnosticSink? diagnostics;
+  final AppDestinations destinations;
+  final WidgetBuilder? accountBackupBuilder;
+  final WidgetBuilder? localDataRecoveryBuilder;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -35,13 +43,65 @@ final class _SettingsPageState extends State<SettingsPage> {
   }
 
   @override
-  Widget build(BuildContext context) => SettingsView(viewModel: _viewModel);
+  Widget build(BuildContext context) => SettingsView(
+    viewModel: _viewModel,
+    destinations: widget.destinations,
+    accountBackupBuilder: widget.accountBackupBuilder,
+    localDataRecoveryBuilder: widget.localDataRecoveryBuilder,
+  );
 }
 
 final class SettingsView extends StatelessWidget {
-  const SettingsView({required this.viewModel, super.key});
+  const SettingsView({
+    required this.viewModel,
+    this.destinations = const AppDestinations(),
+    this.accountBackupBuilder,
+    this.localDataRecoveryBuilder,
+    super.key,
+  });
 
   final SettingsViewModel viewModel;
+  final AppDestinations destinations;
+  final WidgetBuilder? accountBackupBuilder;
+  final WidgetBuilder? localDataRecoveryBuilder;
+
+  void _open(BuildContext context, WidgetBuilder builder) {
+    Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: builder));
+  }
+
+  /// Leaving read-only mode sends every held-back local change to Google,
+  /// so it is confirmed; entering it is immediate.
+  Future<void> _setReadOnly(BuildContext context, bool readOnly) async {
+    if (readOnly) {
+      await viewModel.setToggle(DeviceToggle.readOnlySync, true);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: const Key('settings-read-only-confirm'),
+        title: const Text('Send local changes to Google Tasks?'),
+        content: const Text(
+          'Turning off read-only sync publishes the changes made on this '
+          'device, including any made while it was on.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('settings-read-only-confirm-accept'),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Send changes'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await viewModel.setToggle(DeviceToggle.readOnlySync, false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -154,6 +214,157 @@ final class SettingsView extends StatelessWidget {
                             ],
                           ),
                         ),
+                        const SizedBox(height: 28),
+                        const _PreferenceHeading(
+                          title: 'Task details',
+                          description:
+                              'How subtasks are presented when a task is '
+                              'opened.',
+                        ),
+                        _PreferenceSwitch(
+                          key: const Key('settings-collapse-completed'),
+                          title: 'Collapse completed subtasks',
+                          subtitle:
+                              'Finished subtasks start hidden behind a '
+                              '"Show completed" control in task details.',
+                          value: state.preferences.collapseCompletedSubtasks,
+                          enabled: !state.isSaving,
+                          onChanged: (value) => unawaited(
+                            viewModel.setToggle(
+                              DeviceToggle.collapseCompletedSubtasks,
+                              value,
+                            ),
+                          ),
+                        ),
+                        // Haptics exist only where there is a haptic engine
+                        // to drive; on a desktop this switch would change
+                        // nothing, so it is not shown.
+                        if (supportsHaptics(Theme.of(context).platform)) ...[
+                          const SizedBox(height: 28),
+                          const _PreferenceHeading(
+                            title: 'Feedback',
+                            description: 'Touch feedback on this device.',
+                          ),
+                          _PreferenceSwitch(
+                            key: const Key('settings-haptics'),
+                            title: 'Haptics',
+                            subtitle:
+                                'A short vibration when a task is completed, '
+                                'selected, rescheduled, swiped or deleted.',
+                            value: state.preferences.haptics,
+                            enabled: !state.isSaving,
+                            onChanged: (value) => unawaited(
+                              viewModel.setToggle(DeviceToggle.haptics, value),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 28),
+                        const _PreferenceHeading(
+                          title: 'Sync',
+                          description:
+                              'How this device exchanges changes with Google '
+                              'Tasks.',
+                        ),
+                        _PreferenceSwitch(
+                          key: const Key('settings-read-only-sync'),
+                          title: 'Read-only sync',
+                          subtitle: state.preferences.readOnlySync
+                              ? 'On: changes made here stay on this device '
+                                    'and are not sent to Google Tasks.'
+                              : 'Off: changes made here are sent to Google '
+                                    'Tasks.',
+                          value: state.preferences.readOnlySync,
+                          enabled: !state.isSaving,
+                          onChanged: (value) =>
+                              unawaited(_setReadOnly(context, value)),
+                        ),
+                        _PreferenceSwitch(
+                          key: const Key('settings-auto-sync-startup'),
+                          title: 'Auto-sync on startup',
+                          subtitle:
+                              'Synchronize automatically when Axiotask '
+                              'starts. Refresh and local edits still '
+                              'synchronize when this is off.',
+                          value: state.preferences.autoSyncOnStartup,
+                          enabled: !state.isSaving,
+                          onChanged: (value) => unawaited(
+                            viewModel.setToggle(
+                              DeviceToggle.autoSyncOnStartup,
+                              value,
+                            ),
+                          ),
+                        ),
+                        if (destinations.syncActivity case final builder?)
+                          _SettingsLink(
+                            key: const Key('settings-sync-activity'),
+                            icon: Icons.history,
+                            title: 'Sync activity',
+                            subtitle:
+                                'Every synchronization run and its result.',
+                            onTap: () => _open(context, builder),
+                          ),
+                        if (destinations.account != null ||
+                            accountBackupBuilder != null ||
+                            localDataRecoveryBuilder != null) ...[
+                          const SizedBox(height: 28),
+                          const _PreferenceHeading(
+                            title: 'Account and data',
+                            description:
+                                'Your Google connection and the copy of your '
+                                'tasks on this device.',
+                          ),
+                          if (destinations.account case final builder?)
+                            _SettingsLink(
+                              key: const Key('settings-account'),
+                              icon: Icons.account_circle_outlined,
+                              title: 'Account',
+                              subtitle: 'Sign out or switch Google account.',
+                              onTap: () => _open(context, builder),
+                            ),
+                          if (accountBackupBuilder case final builder?)
+                            _SettingsLink(
+                              key: const Key('settings-account-backup'),
+                              icon: Icons.save_alt_outlined,
+                              title: 'Account backup',
+                              subtitle:
+                                  'Export or restore a complete backup file.',
+                              onTap: () => _open(context, builder),
+                            ),
+                          if (localDataRecoveryBuilder case final builder?)
+                            _SettingsLink(
+                              key: const Key('settings-local-data-recovery'),
+                              icon: Icons.settings_backup_restore,
+                              title: 'Local data recovery',
+                              subtitle:
+                                  'Rebuild this device from Google Tasks.',
+                              onTap: () => _open(context, builder),
+                            ),
+                        ],
+                        if (destinations.about != null ||
+                            destinations.supportProject != null) ...[
+                          const SizedBox(height: 28),
+                          const _PreferenceHeading(
+                            title: 'About',
+                            description: 'Version and project information.',
+                          ),
+                          if (destinations.about case final builder?)
+                            _SettingsLink(
+                              key: const Key('settings-about'),
+                              icon: Icons.info_outline,
+                              title: 'About Axiotask',
+                              subtitle: 'Version, license and source code.',
+                              onTap: () => _open(context, builder),
+                            ),
+                          if (destinations.supportProject case final support?)
+                            _SettingsLink(
+                              key: const Key('settings-support-project'),
+                              icon: Icons.favorite_outline,
+                              title: 'Support the project',
+                              subtitle:
+                                  'Opens the sponsorship page in your browser.',
+                              onTap: support,
+                            ),
+                        ],
                         if (state.isSaving) ...<Widget>[
                           const SizedBox(height: 16),
                           const LinearProgressIndicator(
@@ -184,6 +395,57 @@ final class _PreferenceHeading extends StatelessWidget {
       const SizedBox(height: 4),
       Text(description, style: Theme.of(context).textTheme.bodyMedium),
     ],
+  );
+}
+
+final class _PreferenceSwitch extends StatelessWidget {
+  const _PreferenceSwitch({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+    super.key,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final bool enabled;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    contentPadding: EdgeInsets.zero,
+    title: Text(title),
+    subtitle: Text(subtitle),
+    value: value,
+    onChanged: enabled ? onChanged : null,
+  );
+}
+
+final class _SettingsLink extends StatelessWidget {
+  const _SettingsLink({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    super.key,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => ListTile(
+    contentPadding: EdgeInsets.zero,
+    leading: Icon(icon),
+    title: Text(title),
+    subtitle: Text(subtitle),
+    trailing: const Icon(Icons.chevron_right),
+    onTap: onTap,
   );
 }
 

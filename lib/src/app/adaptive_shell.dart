@@ -8,7 +8,6 @@ import 'package:material_ui/material_ui.dart';
 
 import '../data/search/supported_task_search_repository.dart';
 import '../domain/commands/task_commands.dart';
-import '../domain/export/view_export.dart';
 import '../domain/model/bulk_operations.dart';
 import '../domain/model/preferences.dart';
 import '../domain/model/search.dart';
@@ -26,6 +25,7 @@ import '../features/tasks/quick_add_view_model.dart';
 import '../features/tasks/task_detail_view_model.dart';
 import '../features/tasks/tasks_view_model.dart';
 import '../features/tasks/widgets/bulk_add.dart';
+import '../features/tasks/widgets/export_sheet.dart';
 import '../features/tasks/widgets/quick_add.dart';
 import '../features/tasks/widgets/smart_view_bar.dart';
 import '../features/tasks/widgets/sync_health_header.dart';
@@ -33,6 +33,7 @@ import '../features/tasks/widgets/task_details.dart';
 import '../features/tasks/widgets/task_row_metadata.dart';
 import '../features/tasks/widgets/task_swipe.dart';
 import '../sync/health/sync_health.dart';
+import 'app_destinations.dart';
 import 'desktop_shortcuts.dart';
 import 'desktop_task_drag.dart';
 import 'desktop_workspace.dart';
@@ -52,6 +53,7 @@ final class AdaptiveShell extends StatefulWidget {
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
     this.settingsBuilder,
+    this.destinations = const AppDestinations(),
     super.key,
   });
 
@@ -66,6 +68,7 @@ final class AdaptiveShell extends StatefulWidget {
   final WidgetBuilder? accountBackupBuilder;
   final WidgetBuilder? localDataRecoveryBuilder;
   final WidgetBuilder? settingsBuilder;
+  final AppDestinations destinations;
 
   @override
   State<AdaptiveShell> createState() => _AdaptiveShellState();
@@ -767,6 +770,7 @@ final class _AdaptiveShellState extends State<AdaptiveShell> {
                                       localDataRecoveryBuilder:
                                           widget.localDataRecoveryBuilder,
                                       settingsBuilder: widget.settingsBuilder,
+                                      destinations: widget.destinations,
                                     ),
                                   if (state.syncControlFailureMessage
                                       case final message?)
@@ -1254,6 +1258,7 @@ final class _ApplicationHeader extends StatelessWidget {
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
     this.settingsBuilder,
+    this.destinations = const AppDestinations(),
   });
 
   final bool phone;
@@ -1273,6 +1278,7 @@ final class _ApplicationHeader extends StatelessWidget {
   final WidgetBuilder? accountBackupBuilder;
   final WidgetBuilder? localDataRecoveryBuilder;
   final WidgetBuilder? settingsBuilder;
+  final AppDestinations destinations;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
@@ -1335,6 +1341,7 @@ final class _ApplicationHeader extends StatelessWidget {
                       : onStopSync,
                   onShowShortcuts: onShowShortcuts,
                   settingsBuilder: settingsBuilder,
+                  destinations: destinations,
                   accountBackupBuilder: accountBackupBuilder,
                   localDataRecoveryBuilder: localDataRecoveryBuilder,
                 ),
@@ -1448,6 +1455,7 @@ final class _ApplicationHeader extends StatelessWidget {
                       iconOnly: largeText || width < 400,
                       onShowShortcuts: onShowShortcuts,
                       settingsBuilder: settingsBuilder,
+                      destinations: destinations,
                       accountBackupBuilder: accountBackupBuilder,
                       localDataRecoveryBuilder: localDataRecoveryBuilder,
                     ),
@@ -1489,6 +1497,7 @@ final class _ApplicationOverflow extends StatelessWidget {
     this.phone = false,
     this.onRefresh,
     this.onStopSync,
+    this.destinations = const AppDestinations(),
   });
 
   /// Drops the "More" label where the header would otherwise overflow a
@@ -1501,6 +1510,7 @@ final class _ApplicationOverflow extends StatelessWidget {
   final bool phone;
   final Future<void> Function()? onRefresh;
   final Future<void> Function()? onStopSync;
+  final AppDestinations destinations;
 
   void _open(BuildContext context, WidgetBuilder builder) {
     Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: builder));
@@ -1536,6 +1546,16 @@ final class _ApplicationOverflow extends StatelessWidget {
             item('Account backup', () => _open(context, builder)),
           if (localDataRecoveryBuilder case final builder?)
             item('Local data recovery', () => _open(context, builder)),
+          if (destinations.syncActivity case final builder?)
+            item('Sync activity', () => _open(context, builder)),
+          if (destinations.account case final builder?)
+            item('Account', () => _open(context, builder)),
+          if (destinations.about != null || destinations.supportProject != null)
+            const PopupMenuDivider(),
+          if (destinations.about case final builder?)
+            item('About Axiotask', () => _open(context, builder)),
+          if (destinations.supportProject case final support?)
+            item('Support the project', support),
         ],
       );
     }
@@ -1563,6 +1583,30 @@ final class _ApplicationOverflow extends StatelessWidget {
             leadingIcon: const Icon(Icons.settings_backup_restore),
             onPressed: () => _open(context, builder),
             child: const Text('Local data recovery'),
+          ),
+        if (destinations.syncActivity case final builder?)
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.history),
+            onPressed: () => _open(context, builder),
+            child: const Text('Sync activity'),
+          ),
+        if (destinations.account case final builder?)
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.account_circle_outlined),
+            onPressed: () => _open(context, builder),
+            child: const Text('Account'),
+          ),
+        if (destinations.about case final builder?)
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.info_outline),
+            onPressed: () => _open(context, builder),
+            child: const Text('About Axiotask'),
+          ),
+        if (destinations.supportProject case final support?)
+          MenuItemButton(
+            leadingIcon: const Icon(Icons.favorite_outline),
+            onPressed: support,
+            child: const Text('Support the project'),
           ),
       ],
       builder: (context, controller, _) {
@@ -2317,8 +2361,7 @@ enum _CollectionMenuAction {
   deleteList,
   clearCompleted,
   toggleShowCompleted,
-  exportMarkdown,
-  exportCsv,
+  export,
 }
 
 final class _NormalCollectionCommandBar extends StatelessWidget {
@@ -2352,7 +2395,7 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
         viewModel.tasksRepository is DestructiveTaskOperationsRepository &&
         hasList &&
         clearCompletedCount > 0;
-    final canExport = viewModel.viewExportDestination != null;
+    final canExport = viewModel.canExportCurrentView;
     final hasMenuActions =
         (hasList && !state.isTaskCommandPending) ||
         viewModel.tasksRepository is BulkTasksRepository ||
@@ -2527,18 +2570,13 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
       ),
     if (canExport) ...<PopupMenuEntry<_CollectionMenuAction>>[
       const PopupMenuDivider(),
-      // Exports what the collection shows: its view, filter and sort.
+      // Opens the export sheet for what the collection shows: its view,
+      // filter and sort. Nothing leaves the app until the sheet is used.
       PopupMenuItem<_CollectionMenuAction>(
-        key: const Key('collection-export-markdown'),
-        value: _CollectionMenuAction.exportMarkdown,
+        key: const Key('collection-export'),
+        value: _CollectionMenuAction.export,
         enabled: !state.isExportPending,
-        child: const Text('Export as Markdown…'),
-      ),
-      PopupMenuItem<_CollectionMenuAction>(
-        key: const Key('collection-export-csv'),
-        value: _CollectionMenuAction.exportCsv,
-        enabled: !state.isExportPending,
-        child: const Text('Export as CSV…'),
+        child: const Text('Export…'),
       ),
     ],
   ];
@@ -2570,10 +2608,10 @@ final class _NormalCollectionCommandBar extends StatelessWidget {
             !state.selectedViewPreferences.showCompleted,
           ),
         );
-      case _CollectionMenuAction.exportMarkdown:
-        unawaited(viewModel.exportCurrentView(ViewExportFormat.markdown));
-      case _CollectionMenuAction.exportCsv:
-        unawaited(viewModel.exportCurrentView(ViewExportFormat.csv));
+      case _CollectionMenuAction.export:
+        unawaited(
+          showViewExportSheet(context, viewModel: viewModel, phone: phone),
+        );
     }
   }
 }

@@ -143,7 +143,7 @@ assert_before 'timeout:' 'synthetic-bundle'
 assert_before 'synthetic-bundle' 'linux-app:build debug'
 assert_before 'linux-app:build debug' 'linux-app:build release'
 assert_before 'linux-app:build release' 'linux-app:build-dev debug'
-[[ $(grep -c '^flutter:test integration_test/.* -d linux$' "$command_log") -eq 19 ]] ||
+[[ $(grep -c '^flutter:test integration_test/.* -d linux$' "$command_log") -eq 20 ]] ||
   fail 'default mode did not run every safe Linux integration test exactly once'
 assert_absent 'google_tasks_contract_probe_test.dart'
 assert_absent 'google_tasks_mutation_probe_test.dart'

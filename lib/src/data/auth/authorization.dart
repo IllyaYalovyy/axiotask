@@ -78,6 +78,15 @@ abstract interface class AuthorizationPort {
   Future<Outcome<AccountSubject>> requestTasksAuthorization();
 }
 
+/// An authorization adapter that can forget this device's saved Google grant.
+///
+/// Sign-out is local: it removes the credential this installation holds and
+/// ends the in-memory session. It does not revoke the grant at Google and
+/// never touches cached tasks or pending local changes.
+abstract interface class SignOutAuthorization {
+  Future<Outcome<void>> signOut();
+}
+
 /// A request was stopped before dispatch because the authorization adapter
 /// could not produce a durably recoverable access token.
 ///
@@ -128,7 +137,8 @@ const Outcome<AccountSubject> _unavailableOutcome =
       ),
     );
 
-final class SyntheticAuthorization implements AuthorizationPort {
+final class SyntheticAuthorization
+    implements AuthorizationPort, SignOutAuthorization {
   const SyntheticAuthorization(this.subject);
 
   final AccountSubject subject;
@@ -151,6 +161,11 @@ final class SyntheticAuthorization implements AuthorizationPort {
   @override
   Future<Outcome<AccountSubject>> requestTasksAuthorization() async =>
       Outcome<AccountSubject>.success(subject);
+
+  /// Synthetic grants hold no credential; the coordinator's durable
+  /// reauthorization latch alone represents the signed-out state.
+  @override
+  Future<Outcome<void>> signOut() async => const Outcome<void>.success(null);
 }
 
 enum AuthorizationAdapterFailureKind {

@@ -19,6 +19,10 @@ const androidGoogleScopes = <String>[
 abstract interface class AndroidAuthorizationGateway {
   Future<String?> authorize({required bool interactive});
   Future<void> clearToken(String token);
+
+  /// Ends the Google session Play Services keeps for this application, so
+  /// the next interactive authorization offers the account chooser.
+  Future<void> signOut();
 }
 
 /// Uses the registered Android package and release certificate. No desktop
@@ -53,12 +57,19 @@ final class GoogleAndroidAuthorizationGateway
       accessToken: token,
     );
   }
+
+  @override
+  Future<void> signOut() async {
+    await _initialize();
+    await GoogleSignIn.instance.signOut();
+  }
 }
 
 /// Play Services owns persistence. Only a short-lived access token is kept in
 /// memory; every new token is bound to Google's verified OpenID subject before
 /// any Tasks request can use it.
-final class AndroidAuthorization implements AuthorizationPort {
+final class AndroidAuthorization
+    implements AuthorizationPort, SignOutAuthorization {
   AndroidAuthorization({
     required this._gateway,
     required this._identityClient,
@@ -208,6 +219,22 @@ final class AndroidAuthorization implements AuthorizationPort {
     }
   }
 
+  @override
+  Future<Outcome<void>> signOut() async {
+    if (_closed) return const Outcome.failure(_closedFailure);
+    final token = _token;
+    _token = null;
+    _validUntil = null;
+    try {
+      if (token != null) await _gateway.clearToken(token);
+      await _gateway.signOut();
+    } on Object {
+      return const Outcome.failure(_signOutFailure);
+    }
+    _emit(const NoTasksAuthorization());
+    return const Outcome.success(null);
+  }
+
   Future<Outcome<String>> accessToken() async {
     if (_closed) return const Outcome.failure(_closedFailure);
     if (_token == null || _clock.monotonicElapsed >= _validUntil!) {
@@ -309,4 +336,14 @@ const _closedFailure = Failure(
   impact: 'The authorization session is closed.',
   action: FailureAction.retry,
   safeSummary: 'The authorization session is closed.',
+);
+
+const Failure _signOutFailure = Failure(
+  code: 'auth.sign_out_failed',
+  category: FailureCategory.authorization,
+  operation: FailureOperation.authorize,
+  retry: RetryClassification.unknown,
+  impact: 'This device is still signed in to Google Tasks.',
+  action: FailureAction.retry,
+  safeSummary: 'Google Play services could not end the session.',
 );

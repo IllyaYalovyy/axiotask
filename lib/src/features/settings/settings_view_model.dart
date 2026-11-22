@@ -59,8 +59,7 @@ final class SettingsViewModel extends ChangeNotifier {
       onError: (_) => _replace(
         _state.copyWith(
           isLoading: false,
-          failureMessage:
-              'Appearance settings could not be loaded. Defaults are shown.',
+          failureMessage: 'Settings could not be loaded. Defaults are shown.',
         ),
       ),
     );
@@ -81,6 +80,15 @@ final class SettingsViewModel extends ChangeNotifier {
       preference: 'density',
       write: () => _preferences.setDensity(density),
       apply: () => _state.preferences.copyWith(density: density),
+    );
+  }
+
+  Future<void> setToggle(DeviceToggle toggle, bool value) async {
+    if (_state.isSaving || value == _state.preferences.toggle(toggle)) return;
+    await _persist(
+      preference: toggle.storageName,
+      write: () => _preferences.setDeviceToggle(toggle, value),
+      apply: () => _state.preferences.withToggle(toggle, value),
     );
   }
 
@@ -114,12 +122,20 @@ final class SettingsViewModel extends ChangeNotifier {
   }
 
   void _finishFailure(String preference, String failureCode) {
-    final label = preference == 'theme' ? 'Theme' : 'Density';
+    final label = switch (preference) {
+      'theme' => 'Theme preference',
+      'density' => 'Density preference',
+      'haptics' => 'Haptics setting',
+      'collapse_completed_subtasks' => 'Completed subtasks setting',
+      'read_only_sync' => 'Read-only sync setting',
+      'auto_sync_on_startup' => 'Auto-sync on startup setting',
+      _ => 'Setting',
+    };
     _replace(
       _state.copyWith(
         isSaving: false,
         failureMessage:
-            '$label preference could not be saved. '
+            '$label could not be saved. '
             'Your previous choice is still active.',
       ),
     );
@@ -129,7 +145,7 @@ final class SettingsViewModel extends ChangeNotifier {
           subsystem: DiagnosticSubsystem.ui,
           kind: DiagnosticEventKind.failure,
           code: 'settings.preference_write_failed',
-          operation: 'save_appearance_preference',
+          operation: 'save_device_preference',
           fields: <DiagnosticField>[
             DiagnosticField.safe('preference', preference),
             DiagnosticField.safe('failure_code', failureCode),

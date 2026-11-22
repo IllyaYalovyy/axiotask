@@ -795,6 +795,12 @@ final class _ViewPreferences implements PreferencesRepository {
       const Outcome<void>.success(null);
 
   @override
+  Future<Outcome<void>> setDeviceToggle(
+    DeviceToggle toggle,
+    bool value,
+  ) async => const Outcome<void>.success(null);
+
+  @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) async =>
       const Outcome<void>.success(null);
 

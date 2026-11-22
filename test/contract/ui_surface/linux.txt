@@ -1,0 +1,160 @@
+# User-facing controls of the linux application, by screen.
+# Generated: flutter test test/contract/ui_surface_test.dart --update-goldens
+about | button: Back
+about | button: Donate
+about | button: Open-source licenses
+about | button: Source code
+account | button: Account backup
+account | button: Back
+account | button: Sign out
+account | button: Switch account…
+account-backup | button: Back
+account-backup | button: Choose backup to restore
+account-backup | button: Choose file and export
+app-menu | action: About Axiotask
+app-menu | action: Account
+app-menu | action: Account backup
+app-menu | action: Keyboard shortcuts
+app-menu | action: Local data recovery
+app-menu | action: Resize navigation pane
+app-menu | action: Settings
+app-menu | action: Support the project
+app-menu | action: Sync activity
+app-menu | action: Verified synthetic task
+app-menu | button: Add
+app-menu | button: All
+app-menu | button: Capture options
+app-menu | button: Collection actions
+app-menu | button: Complete task
+app-menu | button: Focus
+app-menu | button: List view settings
+app-menu | button: Missed
+app-menu | button: More
+app-menu | button: My order
+app-menu | button: Refresh
+app-menu | button: Search tasks
+app-menu | button: Select
+app-menu | button: Stop sync
+app-menu | button: Synchronization Synced
+app-menu | button: Synthetic inbox
+app-menu | button: Task actions for Verified synthetic task
+app-menu | button: Unscheduled
+app-menu | button: Upcoming
+app-menu | field: Add a task
+app-menu | field: Task title
+collection-menu | action: Show completed
+collection-menu | button: Add task with details
+collection-menu | button: Create Google task list
+collection-menu | button: Delete task list
+collection-menu | button: Export…
+collection-menu | button: Paste multiple tasks
+collection-menu | button: Rename task list
+collection-menu | choice: Show completed
+export | button: CSV
+export | button: Cancel
+export | button: Copy
+export | button: Markdown
+export | button: Save…
+home | action: Resize navigation pane
+home | action: Verified synthetic task
+home | button: Add
+home | button: All
+home | button: Capture options
+home | button: Collection actions
+home | button: Complete task
+home | button: Focus
+home | button: List view settings
+home | button: Missed
+home | button: More
+home | button: My order
+home | button: Refresh
+home | button: Search tasks
+home | button: Select
+home | button: Stop sync
+home | button: Synchronization Synced
+home | button: Synthetic inbox
+home | button: Task actions for Verified synthetic task
+home | button: Unscheduled
+home | button: Upcoming
+home | field: Add a task
+home | field: Task title
+local-data-recovery | button: Back
+local-data-recovery | button: Reset Local Data
+navigation | action: Resize navigation pane
+navigation | action: Verified synthetic task
+navigation | button: Add
+navigation | button: All
+navigation | button: Capture options
+navigation | button: Collection actions
+navigation | button: Complete task
+navigation | button: Focus
+navigation | button: List view settings
+navigation | button: Missed
+navigation | button: More
+navigation | button: My order
+navigation | button: Refresh
+navigation | button: Search tasks
+navigation | button: Select
+navigation | button: Stop sync
+navigation | button: Synchronization Synced
+navigation | button: Synthetic inbox
+navigation | button: Task actions for Verified synthetic task
+navigation | button: Unscheduled
+navigation | button: Upcoming
+navigation | field: Add a task
+navigation | field: Task title
+settings | button: About Axiotask
+settings | button: Account
+settings | button: Account backup
+settings | button: Back
+settings | button: Local data recovery
+settings | button: Support the project
+settings | button: Sync activity
+settings | choice: Compact density
+settings | choice: Dark theme
+settings | choice: Light theme
+settings | choice: Standard density
+settings | choice: System theme
+settings | switch: Auto-sync on startup
+settings | switch: Collapse completed subtasks
+settings | switch: Read-only sync
+sync-activity | button: Back
+task-details | action: Resize navigation pane
+task-details | action: Resize task details pane
+task-details | action: Verified synthetic task
+task-details | button: Add
+task-details | button: All
+task-details | button: Capture options
+task-details | button: Change due date
+task-details | button: Close details
+task-details | button: Collection actions
+task-details | button: Complete
+task-details | button: Complete task
+task-details | button: Edit task
+task-details | button: Focus
+task-details | button: List view settings
+task-details | button: Missed
+task-details | button: More
+task-details | button: My order
+task-details | button: Next task
+task-details | button: Open task in Google Tasks
+task-details | button: Previous task
+task-details | button: Refresh
+task-details | button: Select
+task-details | button: Stop sync
+task-details | button: Synchronization Synced
+task-details | button: Synthetic inbox
+task-details | button: Task actions for Verified synthetic task
+task-details | button: Unscheduled
+task-details | button: Upcoming
+task-details | field: Add a task
+task-details | field: Task notes
+task-details | field: Task title
+task-row-menu | button: Choose date…
+task-row-menu | button: Complete task
+task-row-menu | button: Delete task
+task-row-menu | button: Edit task…
+task-row-menu | button: Move down
+task-row-menu | button: Move to list…
+task-row-menu | button: Move up
+task-row-menu | button: Open details

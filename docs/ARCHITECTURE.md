@@ -696,6 +696,21 @@ plugins and storage paths. Test and screenshot entry points construct the same
 application with temporary stores, synthetic accounts, fake time, and fake
 Google services.
 
+`AxiotaskProduct` (`lib/src/app/axiotask_product.dart`) is the single widget
+that assembles every user-reachable screen: the task workspace, Settings,
+Account, Account backup, Local data recovery, Sync activity, About and
+diagnostics. `main()` runs it, and the must-have feature contract runs the
+same widget for each shipped target, so a screen that is not wired there is
+not part of the product and a screen that is wired there is tested as shipped.
+Platform edges it needs (document pickers, the browser launcher, the haptic
+engine) come from `ProductPlatformServices.forPlatform`, selected by target
+platform in one place.
+
+Device settings (theme, density, haptics, collapse completed subtasks,
+read-only sync, auto-sync on startup) are device preferences, never database
+columns: the schema is fingerprint-verified and has no migration path, so a
+new setting must not change it.
+
 Test/demo composition and sensitive development diagnostics are enabled by
 separate Dart entry points used only in debug/test builds, not by a runtime
 secret flag in production. Release verification proves that the sensitive sink

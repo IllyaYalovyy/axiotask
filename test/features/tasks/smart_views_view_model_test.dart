@@ -313,6 +313,12 @@ final class _PreferencesRepository implements PreferencesRepository {
   ) => Future.value(const Outcome<void>.success(null));
 
   @override
+  Future<Outcome<void>> setDeviceToggle(
+    DeviceToggle toggle,
+    bool value,
+  ) async => const Outcome<void>.success(null);
+
+  @override
   Future<Outcome<void>> setOnboardingDismissed(bool dismissed) =>
       Future.value(const Outcome<void>.success(null));
 

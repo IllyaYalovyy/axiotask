@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "about": "Every capability the application must never lose. Each entry is exercised against the real shipped widget tree by test/contract/must_have_features_test.dart on every listed target. Entries are append-only: removing or weakening one requires the owner's explicit approval recorded in approved_removals.json (see docs/TESTING.md, 'Must-have feature contract').",
+  "features": [
+    {"id": "MH-CORE-001", "title": "Synchronized Google tasks are listed", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-002", "title": "A task can be created from the main screen", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-003", "title": "A task can be completed from its row", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-004", "title": "Task details open from the list", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-005", "title": "Smart views (Focus, Upcoming, Missed, Unscheduled, All) are one step away", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-006", "title": "Search is reachable from the main screen", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-007", "title": "Synchronization can be refreshed and stopped by hand", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-008", "title": "Settings change the theme", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-CORE-009", "title": "Local data recovery is reachable", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-ABOUT-001", "title": "About screen shows the application version", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-SUPPORT-001", "title": "Donate / Support the project opens the sponsorship page", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-ACCOUNT-001", "title": "Account screen signs out and back in without losing local tasks", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-ACCOUNT-002", "title": "Switch account removes the local copy and returns to first connection", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-SYNC-001", "title": "Read-only sync setting keeps local changes on the device", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-SYNC-002", "title": "Auto-sync on startup setting controls the startup run", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-SYNC-003", "title": "Sync activity lists every run with its result", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-BACKUP-001", "title": "Full account backup can be exported and restored", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-PREF-001", "title": "Collapse completed subtasks is a persistent setting", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-PREF-002", "title": "Haptics can be turned off and on", "since": "1.5.3", "targets": ["android"]},
+    {"id": "MH-EXPORT-001", "title": "Export shows a preview and copies to the clipboard", "since": "1.5.3", "targets": ["android", "linux"]},
+    {"id": "MH-EXPORT-002", "title": "Export offers Share on Android and Save on every platform", "since": "1.5.3", "targets": ["android", "linux"]}
+  ]
+}

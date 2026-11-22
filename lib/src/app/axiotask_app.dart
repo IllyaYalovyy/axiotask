@@ -7,6 +7,9 @@ import '../features/onboarding/onboarding_view_model.dart';
 import '../features/settings/settings_view.dart';
 import '../features/tasks/tasks_view_model.dart';
 import 'adaptive_shell.dart';
+import 'app_destinations.dart';
+import 'device_preferences_scope.dart';
+import 'haptics.dart';
 import 'visual_tokens.dart';
 
 class AxiotaskApp extends StatefulWidget {
@@ -16,8 +19,16 @@ class AxiotaskApp extends StatefulWidget {
     this.diagnosticsBuilder,
     this.accountBackupBuilder,
     this.localDataRecoveryBuilder,
+    this.destinations = const AppDestinations(),
+    this.hapticsDevice = const PlatformHaptics(),
     super.key,
   });
+
+  final AppDestinations destinations;
+
+  /// The device haptic engine, used only on touch platforms and only while
+  /// the "Haptics" setting is on.
+  final Haptics hapticsDevice;
 
   final TasksViewModel viewModel;
   final PreferencesRepository? preferencesRepository;
@@ -87,6 +98,19 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
             ThemePreference.light => ThemeMode.light,
             ThemePreference.dark => ThemeMode.dark,
           },
+          // Above the navigator, so pushed pages (task details on a phone,
+          // Settings) read the same preferences and haptics as the shell.
+          builder: (context, child) => DevicePreferencesScope(
+            preferences: preferences,
+            child: HapticsScope(
+              haptics:
+                  preferences.haptics &&
+                      supportsHaptics(Theme.of(context).platform)
+                  ? widget.hapticsDevice
+                  : const NoHaptics(),
+              child: TaskHaptics(viewModel: widget.viewModel, child: child!),
+            ),
+          ),
           home: Stack(
             children: <Widget>[
               ExcludeSemantics(
@@ -97,11 +121,16 @@ final class _AxiotaskAppState extends State<AxiotaskApp> {
                   diagnosticsBuilder: widget.diagnosticsBuilder,
                   accountBackupBuilder: widget.accountBackupBuilder,
                   localDataRecoveryBuilder: widget.localDataRecoveryBuilder,
+                  destinations: widget.destinations,
                   settingsBuilder: preferencesRepository == null
                       ? null
                       : (_) => SettingsPage(
                           preferencesRepository: preferencesRepository,
                           diagnostics: widget.viewModel.diagnostics,
+                          destinations: widget.destinations,
+                          accountBackupBuilder: widget.accountBackupBuilder,
+                          localDataRecoveryBuilder:
+                              widget.localDataRecoveryBuilder,
                         ),
                 ),
               ),

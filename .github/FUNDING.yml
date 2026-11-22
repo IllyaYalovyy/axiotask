@@ -1,0 +1,5 @@
+# Renders the "Sponsor" button on github.com/IllyaYalovyy/axiotask.
+# GitHub reads this file from the repository's DEFAULT branch only, and only
+# from the root, .github/ or docs/ — moving it anywhere else silently removes
+# the button. https://github.com/sponsors/IllyaYalovyy
+github: IllyaYalovyy

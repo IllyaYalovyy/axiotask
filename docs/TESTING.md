@@ -6,6 +6,80 @@ requires the relevant broader checks to remain green.
 
 ## Principles
 
+### Completed runs only
+
+`scripts/verified_flutter_test.sh` runs Flutter with an independent JSON report
+and checks that every started test finished and the runner reported success.
+The quality gate, CI unit/widget/golden suite, and deep-sync runs use it: Flutter
+can exit zero after an interrupt even while reporting an incomplete test.
+`test/flutter_test_report_test.sh` rejects interrupted, failed, empty, truncated,
+and falsely successful reports. An interrupted run is never release evidence.
+
+### Must-have feature contract
+
+v1.5.4 replaced the whole interface and shipped without About, Donate, account
+settings, the sync settings, sync activity, Android backup, two preferences and
+the export sheet. Every gate was green, because every test pumped a hand-built
+view model or one screen; nothing tested the application users actually
+receive, and the parity plan that should have caught it had recorded the
+losses as decisions. The contract below exists so that cannot happen again. It
+has four parts, all enforced by `scripts/quality.sh` (the ktask `full-gate`
+check) and CI.
+
+1. **One product, tested as shipped.** `lib/src/app/axiotask_product.dart`
+   (`AxiotaskProduct`) is the only place user-reachable screens are assembled.
+   `main()` runs it, and so do the contract tests, for an Android phone and a
+   Linux desktop, over the real runtime, coordinator, engine and SQLite with a
+   synthetic Google account (`test/contract/product_harness.dart`). Platform
+   wiring is chosen from the target platform, never from the host operating
+   system, so "present on Linux, unwired on Android" is a test failure.
+
+2. **A registry of must-have features with behavioural proofs.**
+   `test/contract/must_have_features.json` lists every capability that must
+   never be lost, each with a stable ID and the targets it ships on.
+   `test/contract/must_have_features_test.dart` drives each one through the
+   real interface on every listed target: reach it the way a user does, use
+   it, and assert the effect in durable state. A registry entry without a
+   contract, or a contract without an entry, fails. These tests hold no
+   pixels, sizes or positions: restyling, moving a control within its screen
+   or upgrading Flutter does not break them. Losing what a user could do does.
+
+3. **An inventory of user-facing controls.** `test/contract/ui_surface_test.dart`
+   walks the main screens of each target and records every actionable control
+   by role and accessible name into `test/contract/ui_surface/<target>.txt`.
+   Supporting text, state wording, colour, spacing and layout are not
+   recorded. A control that disappears fails the gate unless
+   `test/contract/approved_removals.json` accounts for it: a rename or move
+   names its replacement (`replaced_by`, which must exist), an outright
+   removal needs the owner (`owner_approval`). A new control only needs to be
+   recorded, which needs nobody's attention:
+
+   ```bash
+   flutter test test/contract/ui_surface_test.dart --update-goldens
+   ```
+
+4. **A ratchet against the last release.** The three files above live in the
+   repository, so a change could delete a feature together with its registry
+   entry, its contract and its inventory lines. `tool/feature_contract/check_ratchet.py`
+   therefore compares the working tree with the newest release tag, which no
+   change under review can edit: every feature ID and target, and every
+   inventoried control, that was released must still be present or be listed
+   in `approved_removals.json`. A checkout without release tags fails rather
+   than silently skipping (`fetch-depth: 0` in CI). Its own behaviour is
+   proven by `test/feature_contract_ratchet_test.sh`.
+
+`approved_removals.json` is the single, reviewable record of everything ever
+taken away from users. Each `owner_approval` must quote the owner's explicit
+order (for a ktask task, the Goal that names the feature and orders its
+removal). The project's ktask `code` category repeats these rules to the
+executing, reviewing, validating and repairing agents; reinstall it with
+`tool/feature_contract/install_ktask_rules.sh` after changing
+`tool/feature_contract/ktask/`.
+
+Adding a user-facing capability therefore means: wire it in `AxiotaskProduct`,
+add a registry entry and a contract for each target, and regenerate the
+inventory. Changing how something looks means nothing here.
+
 ### Android takeover qualification
 
 The maintained contract is the November 15 v1.5.3/v1.5.6 audit manifest in
@@ -569,6 +643,17 @@ Goldens complement behavior assertions; they do not replace them. A changed
 golden is reviewed visually before acceptance and is never bulk-regenerated as
 a way to clear failures.
 
+Comparison is tolerant by design (`test/flutter_test_config.dart`): a golden
+fails only when more than 1% of its pixels differ, or its size changes. A
+Flutter upgrade, font hinting or an anti-aliasing change moves a fraction of a
+percent of pixels in every image without changing what anyone sees; failing on
+those produced dozens of failures at once and taught everyone to regenerate
+without looking. A golden that fails now is a moved, resized, added or removed
+region of the screen and deserves a look. Differences within tolerance are
+printed, not hidden. `GOLDEN_TOLERANCE=0` restores exact comparison for a
+deliberate pixel review. Goldens are the coarse visual alarm; what a user can
+do is protected exactly by the [must-have feature contract](#must-have-feature-contract).
+
 S36B adds focused sync-health header assertions for all outcomes, recovery
 actions, zero/nonzero unresolved work, accessible exact-time details, and 200%
 text. The synthetic Linux capture runs Good, Pending, Failed, No authorization,
@@ -903,8 +988,9 @@ evidence is insufficient.
 ## Local quality commands
 
 `scripts/quality.sh` is the single normal gate. It currently runs formatting
-verification, Drift generated-code freshness, strict static analysis, all
-normal Flutter tests, behavioral privacy-check fixtures, and the repository
+verification, Drift generated-code freshness, strict static analysis, the
+feature-contract ratchet against the last release, all normal Flutter tests
+(including the must-have feature contract and control inventory), behavioral privacy-check fixtures, and the repository
 privacy scan. The S02 native database integration probe remains explicit so it
 can name a real runner:
 

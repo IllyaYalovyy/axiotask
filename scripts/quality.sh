@@ -13,8 +13,17 @@ printf 'Checking generated Dart code...\n'
 printf 'Running static analysis...\n'
 flutter analyze --fatal-infos --fatal-warnings
 
-printf 'Running Flutter tests...\n'
-flutter test
+printf 'Checking that no released feature or control was removed...\n'
+python3 tool/feature_contract/check_ratchet.py
+
+printf 'Running Flutter tests (including the must-have feature contract)...\n'
+bash scripts/verified_flutter_test.sh
+
+printf 'Testing Flutter run completion verification...\n'
+bash test/flutter_test_report_test.sh
+
+printf 'Testing the feature contract ratchet...\n'
+bash test/feature_contract_ratchet_test.sh
 
 printf 'Testing interactive capability gates...\n'
 ./test/preflight_capability_gate_test.sh

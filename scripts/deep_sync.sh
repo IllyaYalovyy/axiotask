@@ -13,7 +13,7 @@ fi
 started=$SECONDS
 printf 'Running deterministic deep synchronization evidence (%s pass(es))...\n' "$runs"
 
-flutter test \
+bash scripts/verified_flutter_test.sh \
   test/support/fake_google_tasks_service_test.dart \
   test/support/multi_host_test.dart \
   test/support/reference_model_test.dart \
@@ -21,10 +21,10 @@ flutter test \
 
 for ((pass = 1; pass <= runs; pass += 1)); do
   printf 'Deep synchronization pass %s/%s...\n' "$pass" "$runs"
-  flutter test test/sync/deep_sync_state_machine_test.dart
+  bash scripts/verified_flutter_test.sh test/sync/deep_sync_state_machine_test.dart
 done
 
-flutter test \
+bash scripts/verified_flutter_test.sh \
   test/sync/content_reconciliation_multi_host_test.dart \
   test/sync/structure_reconciliation_multi_host_test.dart \
   test/sync/process_death_recovery_test.dart \

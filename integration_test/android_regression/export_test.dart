@@ -110,13 +110,26 @@ void main() {
         findsWidgets,
         reason: 'v1.5.3 exports the displayed list/view to Markdown or CSV',
       );
-      expect(find.text('Export as Markdown…').hitTestable(), findsOneWidget);
-      expect(find.text('Export as CSV…').hitTestable(), findsOneWidget);
+      expect(find.text('Export…').hitTestable(), findsOneWidget);
       await f.capture(t, 'menu');
+
+      // v1.5.3 opened an export sheet with a preview and Copy, Save and
+      // Share; nothing is written until one is chosen.
+      await t.tap(find.byKey(const Key('collection-export')));
+      await t.pumpAndSettle();
+      expect(_destination.written, isEmpty);
+      expect(find.byKey(const Key('export-preview')), findsOneWidget);
+      expect(find.text('Markdown').hitTestable(), findsOneWidget);
+      expect(find.text('CSV').hitTestable(), findsOneWidget);
+      expect(
+        find.byKey(const Key('export-copy')).hitTestable(),
+        findsOneWidget,
+      );
+      await f.capture(t, 'sheet');
 
       // 1. The list as shown: manual order, completed hidden, as Markdown.
       _destination.answers.add(_Answer.save);
-      await t.tap(find.text('Export as Markdown…'));
+      await t.tap(find.byKey(const Key('export-save')));
       final listMarkdown = await _awaitExport(t, f);
       expect(listMarkdown.suggestedName, endsWith('.md'));
       expect(listMarkdown.suggestedName, startsWith('axiotask-audit-tasks-'));
@@ -388,10 +401,15 @@ final class _ScriptedDestination implements ViewExportDestination {
         ..sort();
 }
 
+/// Opens the export sheet, picks the format named by [key] and saves.
 Future<void> _chooseExport(WidgetTester t, String key) async {
   await t.tap(find.byKey(const Key('collection-actions-menu')));
   await t.pumpAndSettle();
-  await t.tap(find.byKey(Key(key)));
+  await t.tap(find.byKey(const Key('collection-export')));
+  await t.pumpAndSettle();
+  await t.tap(find.text(key.endsWith('csv') ? 'CSV' : 'Markdown'));
+  await t.pumpAndSettle();
+  await t.tap(find.byKey(const Key('export-save')));
 }
 
 /// Waits for the next written export and its confirmation.

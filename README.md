@@ -1,5 +1,7 @@
 # Axiotask
 
+[![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-db61a2?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/IllyaYalovyy)
+
 Axiotask is a native Google Tasks client built with Flutter. It makes everyday
 task management faster with quick capture, search, smart views, and bulk actions.
 You can keep working offline and see whether your changes have reached Google.

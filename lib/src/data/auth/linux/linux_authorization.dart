@@ -297,7 +297,8 @@ final class LinuxAuthorizedHttpClient extends http.BaseClient {
   }
 }
 
-final class LinuxAuthorization implements AuthorizationPort {
+final class LinuxAuthorization
+    implements AuthorizationPort, SignOutAuthorization {
   factory LinuxAuthorization({
     required LinuxAuthorizationConfig config,
     required BrowserAuthorizationFlow browserFlow,
@@ -922,6 +923,34 @@ final class LinuxAuthorization implements AuthorizationPort {
     }
     _activeTokenClient = null;
     unawaited(_states.close());
+  }
+
+  /// Deletes the saved credential bundle and ends the session.
+  ///
+  /// The credential store verifies the deletion by read-back; a failure
+  /// leaves the session in place so the application never claims a sign-out
+  /// that did not happen.
+  @override
+  Future<Outcome<void>> signOut() async {
+    if (_closed) return Outcome<void>.failure(_closedFailure());
+    _activeBrowserCancellation?.cancel();
+    _activeBrowserCancellation = null;
+    final deleted = await _credentialStore.delete();
+    if (deleted case Failed<void>(:final failure)) {
+      return Outcome<void>.failure(failure);
+    }
+    final session = _session;
+    if (session != null) _discardSession(session);
+    _diagnostics.record(
+      const DiagnosticEvent(
+        subsystem: DiagnosticSubsystem.authorization,
+        kind: DiagnosticEventKind.transition,
+        code: 'auth.signed_out',
+        operation: 'linux-authorization',
+      ),
+    );
+    _emit(const NoTasksAuthorization());
+    return const Outcome<void>.success(null);
   }
 
   void _discardSession(LinuxAuthorizedSession session) {

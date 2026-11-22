@@ -83,6 +83,17 @@ Shared concepts:
 - account/sync health and application preferences;
 - top-level tasks with subtasks in details.
 
+Application-level places are reachable from the application menu ("More app
+actions") on every form factor, and again from Settings, where a user looks
+for them: Settings, Account (sign out, switch account), Account backup, Local
+data recovery, Sync activity, About (with the version) and Support the
+project. Settings holds every persistent choice: theme, density, collapse
+completed subtasks, haptics (touch devices), read-only sync and auto-sync on
+startup. Export opens a sheet with a preview and separate Copy, Save and
+(Android) Share actions; nothing leaves the application before one is chosen.
+None of these may be removed or hidden without the owner's explicit order; see
+the [must-have feature contract](TESTING.md#must-have-feature-contract).
+
 Desktop starts with a navigation/list/detail composition when width permits.
 The detail pane may become a dialog or route at narrower desktop widths. Android
 uses a task-list route, full-screen details, platform navigation/drawer patterns,

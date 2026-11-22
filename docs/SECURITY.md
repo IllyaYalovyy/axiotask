@@ -75,9 +75,34 @@ flag. It does not delete or revoke credentials, delete cached task data, or
 discard pending changes. While stopped, no new Google request is started and the
 UI remains explicitly Inactive with reason `syncStopped`.
 
-Account removal, local sign-out, Google authorization revocation, and their
-credential-deletion recovery behavior are not initial product features. They
-must receive a separate reviewed lifecycle design before implementation.
+### Sign-out and account switching
+
+Sign-out is local and reversible. `SyncCoordinator.signOut` first blocks every
+new trigger and cancels the active run, then asks the authorization adapter to
+forget its grant, then sets the durable reauthorization latch:
+
+- Linux deletes exactly the namespaced credential bundle through
+  `CredentialStore.delete`, whose deletion is verified by read-back. Global
+  secure-store deletion remains prohibited.
+- Android clears the in-memory access token and ends the Play Services
+  session (`GoogleSignIn.signOut`), so the next sign-in offers the account
+  chooser. Axiotask still stores no Android refresh token.
+
+A failed deletion leaves the account signed in and synchronization available;
+the application never reports a sign-out that did not happen. Sign-out does not
+revoke the grant at Google, and it never deletes cached tasks or pending local
+changes. While signed out the health is Inactive with reason
+`noAuthorization`; only the same Google subject can sign back in to this
+partition.
+
+Switching accounts is sign-out followed by deletion of the account row, whose
+audited cascading foreign keys remove the whole local partition (the same
+mechanism Reset Local Data relies on), then a runtime reload at first
+connection. It is offered only behind a confirmation that names the number of
+unsent local changes that will be lost. If sign-out fails, nothing is deleted.
+Google Tasks data is never touched.
+
+Google authorization revocation is not a product feature.
 
 ## Local task data
 

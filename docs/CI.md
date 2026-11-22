@@ -15,6 +15,8 @@ leave a download waiting indefinitely.
 
 ## Automated checks
 
+- The feature-contract ratchet: nothing released in the last tag was removed
+  (the job checks out full history so the tag is available).
 - Formatting, generated-code consistency, fatal static analysis, and privacy scan.
 - The entire `test/` Flutter suite: unit, widget, golden, fake Google contracts,
   synchronization/recovery tests, and coverage.
@@ -26,7 +28,8 @@ leave a download waiting indefinitely.
   remaining integration suites from running.
 - All `capture_linux_*_screenshots.sh` synthetic desktop capture scripts. Captures
   are evidence for human inspection; golden comparisons run in the Flutter suite.
-- SQLite and preferences native integration probes on an Android API 36 emulator.
+- SQLite, preferences and document-channel (account backup read/write)
+  native integration probes on an Android API 36 emulator.
 - The complete 40-contract Android behavior regression suite on the same emulator,
   with per-case outcomes, device facts and screenshots in `android-evidence-<commit>`.
 - A Linux release build and an Android debug build, including verification that

@@ -20,7 +20,12 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The feature-contract ratchet compares with the last release tag.
+          fetch-depth: 0
       - uses: ./.github/actions/setup-flutter
+      - name: Feature contract ratchet (nothing released was removed)
+        run: python3 tool/feature_contract/check_ratchet.py
       - name: Check formatting
         run: dart format --output=none --set-exit-if-changed lib test integration_test
       - name: Check generated code
@@ -33,7 +38,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           mkdir -p test-results
-          flutter test --no-pub --coverage --reporter expanded 2>&1 | tee test-results/flutter-tests.log
+          bash scripts/verified_flutter_test.sh --no-pub --coverage --reporter expanded 2>&1 | tee test-results/flutter-tests.log
       - name: Deep synchronization stress tests
         if: ${{ !cancelled() }}
         run: ./scripts/deep_sync.sh
@@ -116,7 +121,7 @@ jobs:
           disable-animations: true
           script: |
             mkdir -p test-results
-            bash -o pipefail -c 'flutter test --no-pub integration_test/database_native_probe_test.dart integration_test/preferences_native_smoke_test.dart -d emulator-5554 --reporter expanded 2>&1 | tee test-results/android-tests.log'
+            bash -o pipefail -c 'flutter test --no-pub integration_test/database_native_probe_test.dart integration_test/preferences_native_smoke_test.dart integration_test/android_document_channel_probe_test.dart -d emulator-5554 --reporter expanded 2>&1 | tee test-results/android-tests.log'
             bash -o pipefail -c 'dart run tool/android_regression/run.dart --subset complete --test-entrypoint integration_test/android_regression/complete_test.dart --device emulator-5554 --artifacts test-results/android-regression-complete --apkanalyzer "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" 2>&1 | tee test-results/android-regression-complete.log'
       - name: Upload Android evidence
         if: always()
