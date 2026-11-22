@@ -181,6 +181,7 @@ final class SyncHealth {
     this.retryNextAttemptAt,
     this.retryAttemptCount = 0,
     this.automaticRetryExhausted = false,
+    this.reauthorizationRequired = false,
   });
 
   final SyncHealthOutcome outcome;
@@ -195,6 +196,9 @@ final class SyncHealth {
   final DateTime? retryNextAttemptAt;
   final int retryAttemptCount;
   final bool automaticRetryExhausted;
+
+  /// Authorization remains visible even when sync is deliberately stopped.
+  final bool reauthorizationRequired;
 
   /// Routine work does not displace the task list with a banner.
   ///
@@ -477,6 +481,7 @@ SyncHealth projectSyncHealth({
     retryNextAttemptAt: facts.retryNextAttemptAt,
     retryAttemptCount: facts.retryAttemptCount,
     automaticRetryExhausted: facts.automaticRetryExhausted,
+    reauthorizationRequired: facts.reauthorizationRequired,
   );
 
   if (!facts.syncEnabled) {

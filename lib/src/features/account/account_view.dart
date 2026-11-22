@@ -61,8 +61,9 @@ final class _AccountPageState extends State<AccountPage> {
   bool get _signedOut {
     final health = _health;
     return health != null &&
-        health.outcome == SyncHealthOutcome.inactive &&
-        health.inactiveReason == SyncInactiveReason.noAuthorization;
+        (health.reauthorizationRequired ||
+            (health.outcome == SyncHealthOutcome.inactive &&
+                health.inactiveReason == SyncInactiveReason.noAuthorization));
   }
 
   Future<void> _run(
@@ -195,6 +196,9 @@ final class _AccountPageState extends State<AccountPage> {
     final health = _health;
     final session = widget.session;
     final connected = session != null && !_signedOut;
+    final authorizationAction = health?.reauthorizationRequired == true
+        ? SyncHealthAction.reauthorize
+        : health?.action;
     final unsent = health?.counts.total ?? 0;
     final (statusIcon, statusTitle, statusDetail) = session == null
         ? (
@@ -260,15 +264,15 @@ final class _AccountPageState extends State<AccountPage> {
                   runSpacing: 12,
                   children: <Widget>[
                     if (!connected &&
-                        health != null &&
-                        (health.action == SyncHealthAction.connect ||
-                            health.action == SyncHealthAction.reauthorize))
+                        (authorizationAction == SyncHealthAction.connect ||
+                            authorizationAction ==
+                                SyncHealthAction.reauthorize))
                       FilledButton.icon(
                         key: const Key('account-sign-in'),
                         onPressed: _busy
                             ? null
                             : () => unawaited(
-                                widget.onHealthAction(health.action),
+                                widget.onHealthAction(authorizationAction!),
                               ),
                         icon: const Icon(Icons.login),
                         label: Text(

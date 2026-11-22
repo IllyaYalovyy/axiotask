@@ -186,6 +186,26 @@ final _contracts = <String, _Contract>{
     await f.tap(find.byKey(const Key('account-sign-in')));
     expect(find.text('Connected to Google Tasks'), findsOneWidget);
     expect(f.runtime.viewModel.state.health.outcome, SyncHealthOutcome.good);
+    // Stopping sync must not hide a later sign-out or its sign-in action.
+    await f.back();
+    if (f.target.isPhone) {
+      await f.openAppMenu();
+      await f.tap(find.text('Stop sync'));
+    } else {
+      await f.tap(find.byTooltip('Stop sync'));
+    }
+    await f.openAppMenu();
+    await f.tap(find.text('Account'));
+    await f.tap(find.byKey(const Key('account-sign-out')));
+    await f.tap(find.byKey(const Key('account-sign-out-accept')));
+    expect(find.text('Signed out'), findsOneWidget);
+    await f.tap(find.byKey(const Key('account-sign-in')));
+    expect(find.text('Connected to Google Tasks'), findsOneWidget);
+    expect(
+      f.runtime.viewModel.state.health.inactiveReason,
+      SyncInactiveReason.syncStopped,
+      reason: 'Signing back in must preserve the choice to stop sync',
+    );
   }),
   'MH-ACCOUNT-002': _Contract((f) async {
     await f.openAppMenu();

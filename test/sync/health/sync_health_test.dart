@@ -51,6 +51,21 @@ void main() {
   }) => projectSyncHealth(facts: facts, runtime: runtime, now: t0.add(elapsed));
 
   group('Inactive (HLT-001)', () {
+    test('stopped sync retains durable sign-out after runtime restart', () {
+      final health = project(
+        facts: const PersistedSyncFacts(
+          syncEnabled: false,
+          reauthorizationRequired: true,
+        ),
+        runtime: const SyncRuntimeFacts(),
+      );
+
+      expect(health.inactiveReason, SyncInactiveReason.syncStopped);
+      expect(health.action, SyncHealthAction.resume);
+      expect(health.reauthorizationRequired, isTrue);
+      expect(project().reauthorizationRequired, isFalse);
+    });
+
     test('sync stopped has precedence and retains every unresolved count', () {
       final health = project(
         facts: PersistedSyncFacts(

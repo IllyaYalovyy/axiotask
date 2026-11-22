@@ -5,6 +5,7 @@ brought back, with v1.5.3 as the baseline.
 - Donate / Support the project, from the application menu, Settings and About.
 - Account screen: sign out (your tasks stay on the device) and switch to
   another Google account.
+- Sign-out and sign-in also work while sync is stopped, without resuming sync.
 - Read-only sync setting: changes stay on this device until you turn it off.
 - Auto-sync on startup setting.
 - Sync activity: every synchronization run with its trigger, time and result.
@@ -14,6 +15,10 @@ brought back, with v1.5.3 as the baseline.
 - Export opens a sheet with a preview and separate Copy, Save and Share
   actions instead of opening the file picker directly.
 - v1.5.8's layouts, ordering, capture and Undo behavior are unchanged.
+
+Regression coverage includes product-level contracts for the restored features,
+checks that deliberately removing each feature fails its test, and validation
+that interrupted test runs cannot count as successful.
 
 Android signing: this release uses the historical OAuth-registered certificate
 (SHA-1 `92:0A:4B:DD:8D:D9:C4:83:08:F5:6F:5A:6B:AB:8B:5E:36:A3:AC:72`).
