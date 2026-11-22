@@ -13,15 +13,11 @@ final class SyncActivityPage extends StatelessWidget {
   const SyncActivityPage({
     required this.accountId,
     required this.repository,
-    this.readOnlySync = false,
     super.key,
   });
 
   final AccountId accountId;
   final SyncActivityRepository repository;
-
-  /// Shows that runs currently read Google Tasks without publishing.
-  final bool readOnlySync;
 
   @override
   Widget build(BuildContext context) {
@@ -46,19 +42,6 @@ final class SyncActivityPage extends StatelessWidget {
                       'Each synchronization with Google Tasks, newest first.',
                       style: theme.textTheme.bodyLarge,
                     ),
-                    if (readOnlySync) ...<Widget>[
-                      const SizedBox(height: 12),
-                      const ListTile(
-                        key: Key('sync-activity-read-only'),
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.lock_outline),
-                        title: Text('Read-only sync is on'),
-                        subtitle: Text(
-                          'Runs read Google Tasks; local changes are not '
-                          'sent.',
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 12),
                     if (snapshot.hasError)
                       Text(

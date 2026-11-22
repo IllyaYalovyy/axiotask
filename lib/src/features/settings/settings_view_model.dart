@@ -127,7 +127,6 @@ final class SettingsViewModel extends ChangeNotifier {
       'density' => 'Density preference',
       'haptics' => 'Haptics setting',
       'collapse_completed_subtasks' => 'Completed subtasks setting',
-      'read_only_sync' => 'Read-only sync setting',
       'auto_sync_on_startup' => 'Auto-sync on startup setting',
       _ => 'Setting',
     };

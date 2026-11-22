@@ -103,7 +103,6 @@ void main() {
       ),
       ('settings-haptics', DeviceToggle.haptics, false),
       ('settings-auto-sync-startup', DeviceToggle.autoSyncOnStartup, false),
-      ('settings-read-only-sync', DeviceToggle.readOnlySync, true),
     ]) {
       await reveal(tester, find.byKey(Key(key)));
       await tester.tap(find.byKey(Key(key)));
@@ -111,36 +110,6 @@ void main() {
       expect(preferences.toggleWrites.last, (toggle, expected), reason: key);
       expect(preferences.current.toggle(toggle), expected, reason: key);
     }
-  });
-
-  testWidgets('leaving read-only sync asks before publishing', (tester) async {
-    final preferences = MemorySettingsPreferences(
-      current: const DevicePreferences.defaults().copyWith(readOnlySync: true),
-    );
-    addTearDown(preferences.close);
-    final viewModel = SettingsViewModel(preferences)..start();
-    addTearDown(viewModel.dispose);
-    await tester.pumpWidget(_app(viewModel));
-    await tester.pump();
-    final toggle = find.byKey(const Key('settings-read-only-sync'));
-    await reveal(tester, toggle);
-
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('settings-read-only-confirm')), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    expect(preferences.toggleWrites, isEmpty);
-    expect(preferences.current.readOnlySync, isTrue);
-
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const Key('settings-read-only-confirm-accept')),
-    );
-    await tester.pumpAndSettle();
-    expect(preferences.toggleWrites.single, (DeviceToggle.readOnlySync, false));
-    expect(preferences.current.readOnlySync, isFalse);
   });
 
   testWidgets('haptics is offered only where a haptic engine exists', (

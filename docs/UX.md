@@ -88,7 +88,7 @@ actions") on every form factor, and again from Settings, where a user looks
 for them: Settings, Account (sign out, switch account), Account backup, Local
 data recovery, Sync activity, About (with the version) and Support the
 project. Settings holds every persistent choice: theme, density, collapse
-completed subtasks, haptics (touch devices), read-only sync and auto-sync on
+completed subtasks, haptics (touch devices) and auto-sync on
 startup. Export opens a sheet with a preview and separate Copy, Save and
 (Android) Share actions; nothing leaves the application before one is chosen.
 None of these may be removed or hidden without the owner's explicit order; see

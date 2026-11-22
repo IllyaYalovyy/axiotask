@@ -81,7 +81,6 @@ settings | choice: System theme
 settings | switch: Auto-sync on startup
 settings | switch: Collapse completed subtasks
 settings | switch: Haptics
-settings | switch: Read-only sync
 sync-activity | button: Back
 task-details | action: Add date
 task-details | action: Google Tasks

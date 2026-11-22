@@ -105,10 +105,6 @@ enum DeviceToggle {
   /// Start task details with finished subtasks folded away.
   collapseCompletedSubtasks('collapse_completed_subtasks', true),
 
-  /// Keep local edits on this device: synchronization reads Google Tasks but
-  /// publishes nothing.
-  readOnlySync('read_only_sync', false),
-
   /// Synchronize when the application starts.
   autoSyncOnStartup('auto_sync_on_startup', true);
 
@@ -127,7 +123,6 @@ final class DevicePreferences {
     this.workspace = const DesktopWorkspacePreferences.defaults(),
     this.haptics = true,
     this.collapseCompletedSubtasks = true,
-    this.readOnlySync = false,
     this.autoSyncOnStartup = true,
   });
 
@@ -138,7 +133,6 @@ final class DevicePreferences {
       workspace = const DesktopWorkspacePreferences.defaults(),
       haptics = true,
       collapseCompletedSubtasks = true,
-      readOnlySync = false,
       autoSyncOnStartup = true;
 
   final ThemePreference theme;
@@ -147,13 +141,11 @@ final class DevicePreferences {
   final DesktopWorkspacePreferences workspace;
   final bool haptics;
   final bool collapseCompletedSubtasks;
-  final bool readOnlySync;
   final bool autoSyncOnStartup;
 
   bool toggle(DeviceToggle toggle) => switch (toggle) {
     DeviceToggle.haptics => haptics,
     DeviceToggle.collapseCompletedSubtasks => collapseCompletedSubtasks,
-    DeviceToggle.readOnlySync => readOnlySync,
     DeviceToggle.autoSyncOnStartup => autoSyncOnStartup,
   };
 
@@ -163,7 +155,6 @@ final class DevicePreferences {
         DeviceToggle.collapseCompletedSubtasks => copyWith(
           collapseCompletedSubtasks: value,
         ),
-        DeviceToggle.readOnlySync => copyWith(readOnlySync: value),
         DeviceToggle.autoSyncOnStartup => copyWith(autoSyncOnStartup: value),
       };
 
@@ -174,7 +165,6 @@ final class DevicePreferences {
     DesktopWorkspacePreferences? workspace,
     bool? haptics,
     bool? collapseCompletedSubtasks,
-    bool? readOnlySync,
     bool? autoSyncOnStartup,
   }) => DevicePreferences(
     theme: theme ?? this.theme,
@@ -184,7 +174,6 @@ final class DevicePreferences {
     haptics: haptics ?? this.haptics,
     collapseCompletedSubtasks:
         collapseCompletedSubtasks ?? this.collapseCompletedSubtasks,
-    readOnlySync: readOnlySync ?? this.readOnlySync,
     autoSyncOnStartup: autoSyncOnStartup ?? this.autoSyncOnStartup,
   );
 
@@ -197,7 +186,6 @@ final class DevicePreferences {
       workspace == other.workspace &&
       haptics == other.haptics &&
       collapseCompletedSubtasks == other.collapseCompletedSubtasks &&
-      readOnlySync == other.readOnlySync &&
       autoSyncOnStartup == other.autoSyncOnStartup;
 
   @override
@@ -208,7 +196,6 @@ final class DevicePreferences {
     workspace,
     haptics,
     collapseCompletedSubtasks,
-    readOnlySync,
     autoSyncOnStartup,
   );
 }

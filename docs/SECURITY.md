@@ -136,9 +136,11 @@ Development OAuth identifiers/configuration are supplied through documented,
 ignored local files or platform configuration. A sanitized example containing
 placeholders may be committed. Required fields are strictly validated.
 
-Missing/malformed configuration disables connection with a precise diagnosis;
-the application does not guess, silently create a production-looking default,
-or scan the developer's home directory for credentials.
+A missing production configuration file starts the application with the
+connection disabled and a precise diagnosis on standard error; a malformed one
+stops startup with exit status 78. In both cases the application does not
+guess, silently create a production-looking default, or scan the developer's
+home directory for credentials.
 
 Client identifiers that are public by OAuth design are still kept out of this
 repository when they identify a developer's Google Cloud project.

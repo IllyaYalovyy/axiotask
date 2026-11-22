@@ -26,6 +26,9 @@
   <provides><binary>axiotask</binary></provides>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="1.5.11" type="stable" date="2026-11-21">
+      <description><p>Start normally when the Linux Google configuration file does not exist yet, and remove the test-only read-only sync setting.</p></description>
+    </release>
     <release version="1.5.10" type="stable" date="2026-11-21">
       <description><p>Restore About and version, Donate, account sign-out and switching, read-only sync, auto-sync on startup, sync activity, the completed-subtasks and haptics settings, and export preview with Copy and Share. Account backup and restore now work on Android.</p></description>
     </release>

@@ -27,7 +27,6 @@ import '../data/preferences/device_preferences.dart';
 import '../data/preferences/preferences_repository.dart';
 import '../data/preferences/relational_preferences.dart';
 import '../domain/commands/task_commands.dart';
-import '../domain/model/preferences.dart';
 import '../domain/model/tasks.dart';
 import '../domain/recovery/local_data_recovery.dart';
 import '../domain/repository/account_backup_repository.dart';
@@ -95,7 +94,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     required this.preferencesRepository,
     this.syncActivityRepository,
     this.accountSession,
-    this._preferenceSubscription,
   });
 
   @override
@@ -103,8 +101,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
 
   @override
   final AccountSession? accountSession;
-
-  final StreamSubscription<DevicePreferences>? _preferenceSubscription;
 
   @override
   final TasksViewModel viewModel;
@@ -233,8 +229,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
             (await openedDevicePreferences.watch().first).autoSyncOnStartup,
         run: (request) async {
           try {
-            final readOnly =
-                (await openedDevicePreferences.watch().first).readOnlySync;
             return await SyncEngine(
               store: syncStore,
               googleTasks: openedTransport.googleTasks,
@@ -245,7 +239,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
               retryObserver: request.retryObserver,
               control: request.control,
               diagnostics: composition.diagnostics,
-              publishLocalChanges: !readOnly,
             ).run(
               SyncRunRequest(
                 accountId: accountId,
@@ -286,17 +279,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
               accountGuard: composition.accountGuard,
               subject: subject,
             );
-      // Leaving read-only mode publishes the changes held back meanwhile.
-      bool? wasReadOnly;
-      final preferenceSubscription = openedDevicePreferences.watch().listen((
-        preferences,
-      ) {
-        final previous = wasReadOnly;
-        wasReadOnly = preferences.readOnlySync;
-        if (previous == true && !preferences.readOnlySync) {
-          unawaited(coordinator.localEditCommitted().catchError((Object _) {}));
-        }
-      }, onError: (Object _) {});
       return TasksFeatureRuntime._(
         syncActivityRepository: DatabaseSyncActivityRepository(database),
         accountSession: _RuntimeAccountSession(
@@ -306,7 +288,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
           reloadRequest: accountReload,
           diagnostics: composition.diagnostics,
         ),
-        preferenceSubscription: preferenceSubscription,
         viewModel: TasksViewModel(
           accountId: accountId,
           tasksRepository: DatabaseTasksRepository(
@@ -367,7 +348,6 @@ final class TasksFeatureRuntime implements AxiotaskRuntime {
     // Inline detail edits still waiting for their debounce are stored
     // before the database closes.
     await viewModel.flushPendingEdits();
-    await _preferenceSubscription?.cancel();
     viewModel.dispose();
     await coordinator?.close();
     await transport?.close();

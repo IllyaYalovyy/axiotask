@@ -20,7 +20,6 @@ void main() {
         .first;
     expect(preferences.haptics, isTrue);
     expect(preferences.collapseCompletedSubtasks, isTrue);
-    expect(preferences.readOnlySync, isFalse);
     expect(preferences.autoSyncOnStartup, isTrue);
   });
 
@@ -54,13 +53,13 @@ void main() {
     final store = adapter(InMemoryDevicePreferencesBackend());
     final seen = <bool>[];
     final subscription = store.watch().listen(
-      (preferences) => seen.add(preferences.readOnlySync),
+      (preferences) => seen.add(preferences.autoSyncOnStartup),
     );
     await pumpEventQueue();
-    await store.setDeviceToggle(DeviceToggle.readOnlySync, true);
+    await store.setDeviceToggle(DeviceToggle.autoSyncOnStartup, false);
     await pumpEventQueue();
     await subscription.cancel();
-    expect(seen, <bool>[false, true]);
+    expect(seen, <bool>[true, false]);
   });
 
   test('storage names are stable', () {
@@ -73,7 +72,6 @@ void main() {
       <String, String>{
         'haptics': 'haptics',
         'collapseCompletedSubtasks': 'collapse_completed_subtasks',
-        'readOnlySync': 'read_only_sync',
         'autoSyncOnStartup': 'auto_sync_on_startup',
       },
     );

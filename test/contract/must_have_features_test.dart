@@ -17,7 +17,6 @@ import 'dart:io';
 
 import 'package:axiotask/src/app/app_version.dart';
 import 'package:axiotask/src/domain/model/tasks.dart';
-import 'package:axiotask/src/domain/repository/sync_activity_repository.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -35,10 +34,6 @@ final class _Contract {
   final Map<String, bool> storedToggles;
 }
 
-/// Local edits stay unpublished, so the synthetic read-only Google service is
-/// never asked to mutate.
-const _readOnly = <String, bool>{'read_only_sync': true};
-
 const _syntheticTask = 'Verified synthetic task';
 
 final _contracts = <String, _Contract>{
@@ -54,7 +49,7 @@ final _contracts = <String, _Contract>{
       f.runtime.viewModel.state.tasks.map((task) => task.title),
       contains('Contract created task'),
     );
-  }, storedToggles: _readOnly),
+  }),
   'MH-CORE-003': _Contract((f) async {
     await f.tap(find.byTooltip('Complete task'));
     final task = f.runtime.viewModel.state.tasks.singleWhere(
@@ -62,7 +57,7 @@ final _contracts = <String, _Contract>{
     );
     expect(task.status, TaskStatus.completed);
     expect(find.text('Undo'), findsWidgets, reason: 'Completion offers Undo');
-  }, storedToggles: _readOnly),
+  }),
   'MH-CORE-004': _Contract((f) async {
     await f.tap(find.text(_syntheticTask));
     expect(find.byKey(const Key('task-detail-scroll-view')), findsOneWidget);
@@ -220,62 +215,6 @@ final _contracts = <String, _Contract>{
     );
     expect(find.byKey(const Key('account-scroll')), findsNothing);
   }),
-  'MH-SYNC-001': _Contract((f) async {
-    await f.openSettings();
-    final toggle = find.byKey(const Key('settings-read-only-sync'));
-    await f.reveal(toggle);
-    await f.tap(toggle);
-    expect(await f.storedToggle('read_only_sync'), isTrue);
-    await f.back();
-    await _addTask(f, 'Kept on this device');
-    // Force a synchronization now: read-only must hold the change back. The
-    // synthetic Google service rejects every mutation, so a run that tried
-    // to publish could not succeed.
-    final runsBefore = (await f.tester.runAsync(
-      () => f.runtime.syncActivityRepository!
-          .watchRecentRuns(f.runtime.viewModel.accountId)
-          .first,
-    ))!.length;
-    if (f.target.isPhone) {
-      await f.openAppMenu();
-      await f.tap(find.text('Refresh'));
-    } else {
-      await f.tap(find.byTooltip('Refresh'));
-    }
-    final health = f.runtime.viewModel.state.health;
-    expect(
-      health.counts.total,
-      greaterThan(0),
-      reason: 'The change stays pending, unpublished',
-    );
-    final runs = (await f.tester.runAsync(
-      () => f.runtime.syncActivityRepository!
-          .watchRecentRuns(f.runtime.viewModel.accountId)
-          .first,
-    ))!;
-    expect(runs.length, runsBefore + 1, reason: 'Refresh ran a sync');
-    expect(
-      runs.map((run) => run.state),
-      everyElement(SyncRunRecordState.succeeded),
-      reason: 'Read-only runs never attempt (and fail) a publication',
-    );
-    final attempts = await f.tester.runAsync(() {
-      final database = f.runtime.database;
-      return database.select(database.desiredStateAttemptRows).get();
-    });
-    expect(
-      attempts,
-      isEmpty,
-      reason: 'Read-only sync must not even attempt to upload local changes',
-    );
-    // Leaving read-only mode would publish; it must ask first.
-    await f.openSettings();
-    await f.reveal(toggle);
-    await f.tap(toggle);
-    expect(find.byKey(const Key('settings-read-only-confirm')), findsOneWidget);
-    await f.tap(find.text('Cancel'));
-    expect(await f.storedToggle('read_only_sync'), isTrue);
-  }),
   'MH-SYNC-002': _Contract((f) async {
     expect(
       find.text(_syntheticTask),
@@ -404,7 +343,7 @@ final _contracts = <String, _Contract>{
       findsWidgets,
       reason: 'With the setting off, completed subtasks start visible',
     );
-  }, storedToggles: _readOnly),
+  }),
   'MH-PREF-002': _Contract((f) async {
     await f.tap(find.byTooltip('Complete task'));
     expect(f.haptics.total, greaterThan(0), reason: 'Haptics default on');
@@ -418,7 +357,7 @@ final _contracts = <String, _Contract>{
     await _addTask(f, 'Silent task');
     await f.tap(find.byTooltip('Complete task'));
     expect(f.haptics.total, before, reason: 'Off silences every haptic');
-  }, storedToggles: _readOnly),
+  }),
   'MH-EXPORT-001': _Contract((f) async {
     await f.openCollectionMenu();
     await f.tap(find.byKey(const Key('collection-export')));

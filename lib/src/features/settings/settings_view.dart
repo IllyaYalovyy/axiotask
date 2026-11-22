@@ -69,40 +69,6 @@ final class SettingsView extends StatelessWidget {
     Navigator.of(context).push<void>(MaterialPageRoute<void>(builder: builder));
   }
 
-  /// Leaving read-only mode sends every held-back local change to Google,
-  /// so it is confirmed; entering it is immediate.
-  Future<void> _setReadOnly(BuildContext context, bool readOnly) async {
-    if (readOnly) {
-      await viewModel.setToggle(DeviceToggle.readOnlySync, true);
-      return;
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        key: const Key('settings-read-only-confirm'),
-        title: const Text('Send local changes to Google Tasks?'),
-        content: const Text(
-          'Turning off read-only sync publishes the changes made on this '
-          'device, including any made while it was on.',
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            key: const Key('settings-read-only-confirm-accept'),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Send changes'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      await viewModel.setToggle(DeviceToggle.readOnlySync, false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: viewModel,
@@ -264,19 +230,6 @@ final class SettingsView extends StatelessWidget {
                           description:
                               'How this device exchanges changes with Google '
                               'Tasks.',
-                        ),
-                        _PreferenceSwitch(
-                          key: const Key('settings-read-only-sync'),
-                          title: 'Read-only sync',
-                          subtitle: state.preferences.readOnlySync
-                              ? 'On: changes made here stay on this device '
-                                    'and are not sent to Google Tasks.'
-                              : 'Off: changes made here are sent to Google '
-                                    'Tasks.',
-                          value: state.preferences.readOnlySync,
-                          enabled: !state.isSaving,
-                          onChanged: (value) =>
-                              unawaited(_setReadOnly(context, value)),
                         ),
                         _PreferenceSwitch(
                           key: const Key('settings-auto-sync-startup'),

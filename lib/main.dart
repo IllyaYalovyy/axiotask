@@ -43,13 +43,23 @@ Future<void> main() async {
   );
 }
 
-Future<LinuxProfileConfiguration> _loadLinuxConfiguration(
+/// A missing file is the normal state of a fresh installation, so the
+/// application starts with the Google connection unavailable instead of
+/// exiting. A file that exists but is invalid still fails closed.
+Future<LinuxProfileConfiguration?> _loadLinuxConfiguration(
   LinuxApplicationProfile profile,
 ) async {
   try {
     return await LinuxProfileConfiguration.load(profile: profile);
   } on LinuxProfileConfigurationException catch (error) {
     stderr.writeln(error);
+    if (error.isMissing) {
+      stderr.writeln(
+        'Axiotask is starting without a Google connection. Create the '
+        'configuration file to sign in.',
+      );
+      return null;
+    }
     exit(78);
   }
 }

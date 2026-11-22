@@ -54,6 +54,10 @@ Edit `client_id` and `client_secret` in that file (normally
 `~/.config/axiotask/config.toml`). GNOME Keyring must be running and unlocked to
 store sign-in credentials. Launch the app and choose **Connect** to sign in.
 
+Without this file the app still starts, but the Google connection is
+unavailable until the file exists. A file that is present but invalid stops
+startup with an error message (exit status 78).
+
 ## Install and run
 
 The installer builds a release and copies it into your home directory:

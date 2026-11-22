@@ -117,7 +117,6 @@ settings | choice: Standard density
 settings | choice: System theme
 settings | switch: Auto-sync on startup
 settings | switch: Collapse completed subtasks
-settings | switch: Read-only sync
 sync-activity | button: Back
 task-details | action: Resize navigation pane
 task-details | action: Resize task details pane

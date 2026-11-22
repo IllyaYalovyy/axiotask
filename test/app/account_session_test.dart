@@ -9,14 +9,10 @@ import 'package:axiotask/src/core/outcome.dart';
 import 'package:axiotask/src/core/randomness.dart';
 import 'package:axiotask/src/data/auth/authorization.dart';
 import 'package:axiotask/src/data/database/app_database.dart';
-import 'package:axiotask/src/data/google_tasks/service.dart';
 import 'package:axiotask/src/data/preferences/device_preferences.dart';
-import 'package:axiotask/src/domain/model/preferences.dart';
 import 'package:axiotask/src/domain/repository/sync_activity_repository.dart';
 import 'package:axiotask/src/sync/health/sync_health.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import '../support/fake_google_tasks_service.dart';
 
 /// Account settings restored from v1.5.3: sign-out keeps local data, account
 /// switching removes it, and the two startup/sync device settings change
@@ -184,76 +180,6 @@ void main() {
     expect(recorded.single.state, SyncRunRecordState.succeeded);
     expect(recorded.single.finishedAt, isNotNull);
   });
-
-  test(
-    'read-only sync holds local changes back, and turning it off sends them',
-    () async {
-      final remote = FakeGoogleTasksService();
-      addTearDown(remote.close);
-      final delegate = TestComposition.create(instanceId: 'read-only');
-      final composition = _Composition(
-        delegate,
-        authorization: SyntheticAuthorization.new,
-        googleTasks: remote,
-      );
-      final preferences = InMemoryDevicePreferencesBackend();
-      await preferences.writeBool(
-        '${composition.boundary.storage.preferencesNamespace}.read_only_sync',
-        true,
-      );
-      final runtime = await open(composition, preferences: preferences);
-      addTearDown(runtime.close);
-      await runtime.start();
-      runtime.viewModel.start();
-      await pumpEventQueue();
-
-      await runtime.viewModel.createTaskList('Held back list');
-      await pumpEventQueue();
-      final list = runtime.viewModel.state.taskLists.single;
-      await runtime.viewModel.createTask(
-        taskListId: list.id,
-        title: 'Held back task',
-      );
-      await runtime.coordinator!.refresh();
-
-      bool isMutation(FakeGoogleTasksCall call) =>
-          call.operation != FakeGoogleTasksMethod.listTaskLists &&
-          call.operation != FakeGoogleTasksMethod.listTasks &&
-          call.operation != FakeGoogleTasksMethod.getTaskList;
-      expect(
-        remote.calls.where(isMutation),
-        isEmpty,
-        reason: 'Read-only synchronization never mutates Google Tasks',
-      );
-      expect(
-        (await runs(runtime)).map((run) => run.state),
-        everyElement(SyncRunRecordState.succeeded),
-      );
-      expect((await health(runtime)).counts.total, greaterThan(0));
-      expect(runtime.viewModel.state.tasks.map((task) => task.title), <String>[
-        'Held back task',
-      ]);
-
-      // Leaving read-only mode publishes what was held back, by itself.
-      await runtime.preferencesRepository!.setDeviceToggle(
-        DeviceToggle.readOnlySync,
-        false,
-      );
-      await pumpEventQueue();
-      delegate.clock.advance(const Duration(seconds: 30));
-      await pumpEventQueue();
-      await runtime.coordinator!.whenIdle;
-
-      expect(
-        remote.calls.where(isMutation).map((call) => call.operation),
-        <FakeGoogleTasksMethod>[
-          FakeGoogleTasksMethod.createTaskList,
-          FakeGoogleTasksMethod.createTask,
-        ],
-      );
-      expect((await health(runtime)).counts.total, 0);
-    },
-  );
 }
 
 /// A [TestComposition] whose transport uses a different authorization.
@@ -261,10 +187,7 @@ final class _Composition implements AppComposition {
   _Composition(
     this._delegate, {
     required AuthorizationPort Function(AccountSubject subject) authorization,
-    this.googleTasks,
   }) : _transportAuthorization = authorization;
-
-  final GoogleTasksService? googleTasks;
 
   final TestComposition _delegate;
   final AuthorizationPort Function(AccountSubject subject)
@@ -303,7 +226,7 @@ final class _Composition implements AppComposition {
     final synthetic = createSyntheticReadTransport(selected);
     return ReadSliceTransport(
       authorization: _transportAuthorization(selected),
-      googleTasks: googleTasks ?? synthetic.googleTasks,
+      googleTasks: synthetic.googleTasks,
     );
   }
 }

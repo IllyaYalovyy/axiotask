@@ -130,6 +130,45 @@ client_secret = "client-secret-output-canary"
       },
     );
 
+    test('reports a missing file distinctly from an invalid one', () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'axiotask-config-missing-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final missing = File('${directory.path}/config.toml');
+
+      await expectLater(
+        LinuxProfileConfiguration.load(
+          profile: LinuxApplicationProfile.production,
+          file: missing,
+        ),
+        throwsA(
+          isA<LinuxProfileConfigurationException>()
+              .having((error) => error.isMissing, 'isMissing', isTrue)
+              .having(
+                (error) => error.message,
+                'message',
+                contains(missing.path),
+              ),
+        ),
+      );
+
+      await missing.writeAsString('[google]\nclient_id = ""\n');
+      await expectLater(
+        LinuxProfileConfiguration.load(
+          profile: LinuxApplicationProfile.production,
+          file: missing,
+        ),
+        throwsA(
+          isA<LinuxProfileConfigurationException>().having(
+            (error) => error.isMissing,
+            'isMissing',
+            isFalse,
+          ),
+        ),
+      );
+    });
+
     test('rejects a configuration symlink', () async {
       final fixture = await _configurationFile('''
 [google]

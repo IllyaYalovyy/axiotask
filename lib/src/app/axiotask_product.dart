@@ -16,7 +16,6 @@ import '../features/sync_activity/sync_activity_view.dart';
 import 'app_bootstrap.dart';
 import 'app_destinations.dart';
 import 'app_version.dart';
-import 'device_preferences_scope.dart';
 import 'haptics.dart';
 
 /// The platform edges the shipped application needs beyond its runtime.
@@ -136,11 +135,8 @@ final class AxiotaskProduct extends StatelessWidget {
         supportProject: _supportProject,
         syncActivity: activity == null
             ? null
-            : (context) => SyncActivityPage(
-                accountId: accountId,
-                repository: activity,
-                readOnlySync: DevicePreferencesScope.of(context).readOnlySync,
-              ),
+            : (context) =>
+                  SyncActivityPage(accountId: accountId, repository: activity),
         account: health == null
             ? null
             : (_) => AccountPage(

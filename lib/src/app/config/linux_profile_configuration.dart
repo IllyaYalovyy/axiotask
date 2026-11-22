@@ -47,6 +47,7 @@ final class LinuxProfileConfiguration {
     if (type == FileSystemEntityType.notFound) {
       throw LinuxProfileConfigurationException(
         'Configuration is missing at $path.',
+        isMissing: true,
       );
     }
     if (type != FileSystemEntityType.file) {
@@ -136,9 +137,15 @@ final class LinuxProfileConfiguration {
 }
 
 final class LinuxProfileConfigurationException implements Exception {
-  const LinuxProfileConfigurationException(this.message);
+  const LinuxProfileConfigurationException(
+    this.message, {
+    this.isMissing = false,
+  });
 
   final String message;
+
+  /// True only when no configuration file exists, as on a fresh installation.
+  final bool isMissing;
 
   @override
   String toString() => 'Axiotask configuration error: $message';

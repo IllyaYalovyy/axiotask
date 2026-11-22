@@ -1,6 +1,29 @@
 {
     "schema": 1,
     "about": "Owner-approved removals of must-have features or user-facing controls. Each entry needs the removed id or control, the release it was removed in, and the owner approval reference (for example the ktask task whose Goal explicitly orders the removal). The contract ratchet fails for any removal not listed here.",
-    "removed_features": [],
-    "removed_controls": []
+    "removed_features": [
+        {
+            "id": "MH-SYNC-001",
+            "targets": [
+                "android",
+                "linux"
+            ],
+            "removed_in": "1.5.11",
+            "owner_approval": "Owner instruction of 2026-11-21: read-only sync existed only for testing and is removed."
+        }
+    ],
+    "removed_controls": [
+        {
+            "target": "android",
+            "control": "settings | switch: Read-only sync",
+            "removed_in": "1.5.11",
+            "owner_approval": "Owner instruction of 2026-11-21: read-only sync existed only for testing and is removed."
+        },
+        {
+            "target": "linux",
+            "control": "settings | switch: Read-only sync",
+            "removed_in": "1.5.11",
+            "owner_approval": "Owner instruction of 2026-11-21: read-only sync existed only for testing and is removed."
+        }
+    ]
 }

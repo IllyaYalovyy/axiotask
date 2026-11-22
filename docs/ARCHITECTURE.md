@@ -707,7 +707,7 @@ engine) come from `ProductPlatformServices.forPlatform`, selected by target
 platform in one place.
 
 Device settings (theme, density, haptics, collapse completed subtasks,
-read-only sync, auto-sync on startup) are device preferences, never database
+auto-sync on startup) are device preferences, never database
 columns: the schema is fingerprint-verified and has no migration path, so a
 new setting must not change it.
 

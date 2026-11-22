@@ -91,7 +91,6 @@ void main() {
       MaterialApp(
         home: SyncActivityPage(
           accountId: const AccountId(1),
-          readOnlySync: true,
           repository: _Runs(<SyncRunRecord>[
             SyncRunRecord(
               state: SyncRunRecordState.failed,
@@ -114,7 +113,6 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const Key('sync-activity-read-only')), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const Key('sync-run-0')),
@@ -142,7 +140,6 @@ void main() {
     );
     await tester.pump();
     expect(find.byKey(const Key('sync-activity-empty')), findsOneWidget);
-    expect(find.byKey(const Key('sync-activity-read-only')), findsNothing);
 
     await tester.pumpWidget(
       MaterialApp(
