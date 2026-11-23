@@ -194,6 +194,9 @@ run_noninteractive_gate() {
   run_isolated_bundle_smoke
   ./scripts/linux_app.sh build debug
   ./scripts/linux_app.sh build release
+  # The shipped release binary, in every home a new installation can meet.
+  ./scripts/verify_linux_fresh_install.py \
+    "$(dirname "$(linux_bundle_path release "$repository_root")")"
   ./scripts/linux_app.sh build-dev debug
   require_clean_worktree
   printf 'Noninteractive Linux acceptance evidence passed.\n'

@@ -3,7 +3,7 @@
 /// Kept equal to the `version:` name in `pubspec.yaml` by
 /// `test/app/app_version_test.dart`, so a version bump that forgets this
 /// constant fails the gate instead of shipping a wrong About screen.
-const String appVersion = '1.5.11';
+const String appVersion = '1.5.12';
 
 /// The project's sponsorship page.
 final Uri supportProjectUri = Uri.parse(
