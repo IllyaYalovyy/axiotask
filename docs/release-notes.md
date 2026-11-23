@@ -1,14 +1,15 @@
-Fixes Linux startup after an upgrade or a fresh installation, and removes a
-test-only setting.
+Fixes "Tasks unavailable" (`database.open_failed`) on a fresh Linux
+installation.
 
-- Linux: Axiotask now starts when `~/.config/axiotask/config.toml` does not
-  exist. The Google connection stays unavailable until the file is created
-  from `config/axiotask.example.toml` with a desktop OAuth client (see the
-  README); nothing is migrated from the v1.5.3 `config.json`. A file that
-  exists but is invalid still stops startup with a precise message.
-- The Read-only sync setting is removed. It existed for testing only; changes
-  made on the device are always sent to Google Tasks while sync is running.
-  Stop sync remains the way to hold synchronization.
+- Linux: Axiotask now always keeps its data in
+  `~/.local/share/io.github.IllyaYalovyy.axiotask` (under `XDG_DATA_HOME` when
+  that is set). Before, a `~/.local/share/axiotask` folder left behind by
+  v1.5.3 or earlier was picked up instead, and its old database could not be
+  opened. That folder is now ignored and left untouched; nothing is migrated
+  from it.
+- A relative `XDG_DATA_HOME` is ignored, as the XDG specification requires.
+- The release gate now starts the shipped Linux binary in every kind of home
+  directory a new installation can meet, including one with v1.5.3 data.
 
 Android signing: this release uses the historical OAuth-registered certificate
 (SHA-1 `92:0A:4B:DD:8D:D9:C4:83:08:F5:6F:5A:6B:AB:8B:5E:36:A3:AC:72`).

@@ -1,10 +1,9 @@
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
-
 import '../../core/clock.dart';
 import '../../core/diagnostics/diagnostics.dart';
 import '../../core/randomness.dart';
+import '../../data/application_support_directory.dart';
 import '../../data/auth/authorization.dart';
 import '../../data/diagnostics/local_diagnostic_exporter.dart';
 import 'app_composition.dart';
@@ -153,7 +152,7 @@ final class _UnavailableDiagnosticExporter implements DiagnosticExportPort {
 }
 
 Future<File> _resolveDiagnosticFile(CompositionBoundary boundary) async {
-  final directory = await getApplicationSupportDirectory();
+  final directory = await resolveApplicationSupportDirectory();
   return File(
     '${directory.path}${Platform.pathSeparator}'
     '${boundary.storage.diagnosticsFileName}',

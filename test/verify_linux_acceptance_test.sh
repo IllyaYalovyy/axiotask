@@ -80,7 +80,15 @@ for command_name in preflight_capability_gate probe_linux_auth \
     "printf '$label:%s\\n' \"\$*\" >>\"\$AXIOTASK_ACCEPTANCE_TEST_LOG\"" \
     >"$fixture_root/repository/scripts/$command_name.sh"
 done
-chmod +x "$fixture_root/repository/scripts/"*.sh
+# shellcheck disable=SC2016
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'printf '\''fresh-install:%s\n'\'' "$*" >>"$AXIOTASK_ACCEPTANCE_TEST_LOG"' \
+  '[[ "${AXIOTASK_ACCEPTANCE_FAIL_STAGE:-}" != fresh-install ]]' \
+  >"$fixture_root/repository/scripts/verify_linux_fresh_install.py"
+chmod +x "$fixture_root/repository/scripts/"*.sh \
+  "$fixture_root/repository/scripts/verify_linux_fresh_install.py"
 
 # shellcheck disable=SC2016
 printf '%s\n' \
@@ -142,7 +150,10 @@ assert_before 'flutter:build linux --debug' 'timeout:'
 assert_before 'timeout:' 'synthetic-bundle'
 assert_before 'synthetic-bundle' 'linux-app:build debug'
 assert_before 'linux-app:build debug' 'linux-app:build release'
-assert_before 'linux-app:build release' 'linux-app:build-dev debug'
+assert_before 'linux-app:build release' 'fresh-install:'
+grep -q '^fresh-install:.*/build/linux/x64/release/bundle$' "$command_log" ||
+  fail 'the fresh-install check did not receive the release bundle'
+assert_before 'fresh-install:' 'linux-app:build-dev debug'
 [[ $(grep -c '^flutter:test integration_test/.* -d linux$' "$command_log") -eq 20 ]] ||
   fail 'default mode did not run every safe Linux integration test exactly once'
 assert_absent 'google_tasks_contract_probe_test.dart'
@@ -165,6 +176,14 @@ fi
 assert_absent 'flutter:'
 assert_absent 'privacy'
 assert_absent 'linux-app:'
+
+: >"$command_log"
+if "${common_env[@]}" AXIOTASK_ACCEPTANCE_FAIL_STAGE=fresh-install \
+  "$verifier" >/dev/null 2>&1; then
+  fail 'a failed fresh-install check did not fail the command'
+fi
+assert_before 'linux-app:build release' 'fresh-install:'
+assert_absent 'linux-app:build-dev'
 
 : >"$command_log"
 if "${common_env[@]}" AXIOTASK_ACCEPTANCE_FAIL_STAGE=integration \

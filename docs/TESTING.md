@@ -1009,6 +1009,25 @@ secure-storage, and cleanup-backed contract probes run only with the explicit
 combined `--human --live-probes` form. The command reports evidence and never
 records human approval itself.
 
+The gate also runs `scripts/verify_linux_fresh_install.py` on the release
+bundle it built. That command starts the shipped production binary, each time
+in its own disposable home directory and D-Bus session, in every state a new
+installation can meet: an empty home, repeated launches, the data directory
+and configuration v1.5.3 left behind, a custom or relative `XDG_DATA_HOME`, a
+home path needing quoting, a launch through a symbolic link, and a present or
+invalid configuration file. The verdict is what the application persists: a
+complete database in `$XDG_DATA_HOME/io.github.IllyaYalovyy.axiotask` and no
+failure record in its diagnostics, with older data left byte-identical.
+`--previous <bundle>` adds upgrades from an earlier release's bundle, and
+`--expect-failure` is the control proving the check fails on a build that
+opens v1.5.3 data. A launch that freezes before reaching any verdict is
+repeated and counted in the output; it never passes silently. Run it directly
+against any bundle or staged package tree:
+
+```text
+./scripts/verify_linux_fresh_install.py build/linux/x64/release/bundle
+```
+
 S02 acceptance requires the Android command on an emulator plus a debug APK
 build followed by `./scripts/check_android_native_assets.sh`. The probe resolves
 a distinct application-support filename, uses only a fixed synthetic account

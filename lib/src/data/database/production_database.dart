@@ -1,7 +1,6 @@
 import 'dart:io';
 
-import 'package:path_provider/path_provider.dart';
-
+import '../application_support_directory.dart';
 import 'app_database.dart';
 
 Future<AppDatabase> openProductionDatabase(String databaseName) async {
@@ -18,7 +17,7 @@ Future<File> resolveProductionDatabaseFile(String databaseName) async {
     );
   }
 
-  final supportDirectory = await getApplicationSupportDirectory();
+  final supportDirectory = await resolveApplicationSupportDirectory();
   return File('${supportDirectory.path}${Platform.pathSeparator}$databaseName');
 }
 
