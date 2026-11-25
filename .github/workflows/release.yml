@@ -207,7 +207,15 @@ jobs:
       - name: Build the release APK
         run: |
           rm -f tool/oauth_credentials.json
-          flutter build apk --release
+          # Retried because the public Gradle repositories sometimes answer
+          # 429; a real build error fails all three attempts.
+          built=no
+          for attempt in 1 2 3; do
+            if flutter build apk --release; then built=yes; break; fi
+            echo "::warning::APK build attempt $attempt failed"
+            sleep 60
+          done
+          [ "$built" = yes ]
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-release.apk \
              "dist/axiotask-${GITHUB_REF_NAME#v}.apk"

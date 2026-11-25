@@ -186,6 +186,18 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // The 100 ms above is a guess at how long real file IO takes. On a busy
+  // machine it is too short and the result is not on screen yet, which made
+  // this suite fail at random in the gate. Wait for the outcome itself.
+  Future<void> waitFor(WidgetTester tester, Finder outcome) async {
+    for (var i = 0; i < 100 && outcome.evaluate().isEmpty; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+    }
+  }
+
   group('Sync tab — backup', () {
     testWidgets('exposes Export and Restore backup buttons', (tester) async {
       await pumpProps(tester);
@@ -204,6 +216,7 @@ void main() {
       );
       await scrollTo(tester, const Key('export-backup-button'));
       await tapAsync(tester, const Key('export-backup-button'));
+      await waitFor(tester, find.textContaining('Backed up'));
 
       expect(
         find.textContaining('Backed up 2 task(s) in 1 list(s) →'),
