@@ -108,6 +108,21 @@ jobs:
           echo "$(oauth_defines_report)"
           flutter build linux --release ${OAUTH_DEFINES+"${OAUTH_DEFINES[@]}"}
 
+      # The binary that is about to be published, started the way a user's
+      # machine starts it: empty home, restarts, the data every earlier
+      # release left on disk, and on top of the newest published release.
+      # It must also be able to sign in as installed. Nothing is packaged
+      # unless this passes.
+      - name: First start, restart and upgrade of the release binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb dbus-daemon rpm2cpio cpio
+          previous=$(bash tool/fetch_previous_release.sh "$RUNNER_TEMP/previous")
+          xvfb-run -a python3 tool/verify_first_start.py \
+            build/linux/x64/release/bundle \
+            --require-oauth-client --previous "$previous"
+
       # Both packages are built from the ONE bundle above: a second build would
       # be a second, differently-verified binary in the same release.
       - name: Package the RPM

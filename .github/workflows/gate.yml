@@ -203,6 +203,52 @@ jobs:
           path: coverage/lcov.info
           if-no-files-found: warn
 
+  # What a user's machine does with the built program: install state, first
+  # start, restart, and starting on top of the data and the binary of the
+  # newest published release. tool/verify_first_start.py reads no source file,
+  # so this job keeps its meaning however the code behind the binary changes
+  # — 1.5.4 to 1.5.12 replaced the code and its tests together, and no check
+  # compared the new binary with what users already had.
+  linux:
+    name: linux build · real-engine smoke · first start and upgrade
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Linux build toolchain and a headless display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang cmake ninja-build pkg-config libgtk-3-dev \
+            xvfb dbus-daemon rpm2cpio cpio
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.47.5'
+          cache: true
+
+      - run: flutter pub get --enforce-lockfile
+
+      - name: Real-engine smoke on a throwaway data directory
+        run: xvfb-run -a flutter test integration_test -d linux
+
+      - name: Build the Linux release bundle
+        run: flutter build linux --release
+
+      - name: Fetch the newest published release
+        id: previous
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "bundle=$(bash tool/fetch_previous_release.sh "$RUNNER_TEMP/previous")" >> "$GITHUB_OUTPUT"
+
+      - name: First start, restart and upgrade of the built program
+        run: |
+          xvfb-run -a python3 tool/verify_first_start.py \
+            build/linux/x64/release/bundle \
+            --previous "${{ steps.previous.outputs.bundle }}"
+
   android:
     name: android debug apk
     runs-on: ubuntu-latest
