@@ -250,9 +250,9 @@ jobs:
             --previous "${{ steps.previous.outputs.bundle }}"
 
   android:
-    name: android debug apk
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: android debug apk · used on an emulator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -275,6 +275,35 @@ jobs:
       # signing (#196) is still an operator step.
       - name: flutter build apk --debug
         run: flutter build apk --debug
+
+      # The built APK, used the way a person uses it: installed on a clean
+      # emulator, started, and driven through the labels on the screen.
+      # tool/verify_android_app.py reads no source file. It fails when a
+      # control listed in tool/android_surface.json disappears, or when
+      # capture, restart, Duplicate, completion, Undo, the swipes, selection
+      # or export stop working — the phone regressions of 1.5.4 to 1.5.12.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Use the built APK on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: python3 tool/verify_android_app.py --apk build/app/outputs/flutter-apk/app-debug.apk --artifacts android-evidence
+
+      - name: Upload the screens of a failed check
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-evidence
+          path: android-evidence/
+          if-no-files-found: ignore
 
       - name: Upload the Android CI APK
         uses: actions/upload-artifact@v4

@@ -38,6 +38,7 @@ on:
 # Creating the release and uploading assets writes to the repository.
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
@@ -52,6 +53,20 @@ jobs:
       # published release that cannot be withdrawn.
       - name: The tag must equal the pubspec version
         run: bash tool/release_guard.sh "${GITHUB_REF_NAME}"
+
+      # A tag can be pushed on any commit. Only one that the gate has passed
+      # — tests, the Linux first-start check and the Android emulator check —
+      # may become a release.
+      - name: The gate must have passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion=$(gh run list --workflow gate --commit "$GITHUB_SHA" \
+            --json conclusion --jq '[.[].conclusion] | if any(. == "success") then "success" else (.[0] // "missing") end')
+          if [ "$conclusion" != success ]; then
+            echo "::error::the gate has not passed for $GITHUB_SHA (found: $conclusion) — push the commit to main, wait for a green gate, then tag it"
+            exit 1
+          fi
 
       - uses: actions/setup-java@v4
         with:
@@ -208,6 +223,35 @@ jobs:
             echo "::error::the APK is not signed with the OAuth-registered certificate — Google sign-in would fail and existing installations could not update"
             exit 1
           fi
+
+      # The exact APK that is about to be published, installed OVER the
+      # newest published APK and then used through its screen. An APK that
+      # existing installations cannot update to (another certificate, a lower
+      # build number) fails here instead of on users' phones, and so does one
+      # that lost a control or a gesture. Nothing is published unless this
+      # passes.
+      - name: Fetch the newest published APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/previous-apk"
+          gh release download --pattern '*.apk' --dir "$RUNNER_TEMP/previous-apk"
+          ls "$RUNNER_TEMP/previous-apk"/*.apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Update from the published APK and use the release APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: python3 tool/verify_android_app.py --apk "dist/axiotask-${GITHUB_REF_NAME#v}.apk" --previous-apk "$(ls $RUNNER_TEMP/previous-apk/*.apk | head -1)" --artifacts android-evidence
 
       - name: Checksums
         run: |

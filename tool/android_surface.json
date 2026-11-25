@@ -1,0 +1,120 @@
+{
+  "home": [
+    "Open navigation menu",
+    "Search tasks",
+    "Sort order",
+    "More list actions",
+    "New task",
+    "Focus",
+    "Upcoming",
+    "Missed",
+    "Unscheduled",
+    "All Tasks"
+  ],
+  "list menu": [
+    "Select tasks",
+    "Add multiple tasks",
+    "Show completed",
+    "Export view…"
+  ],
+  "sort menu": [
+    "My order",
+    "Due date",
+    "Alphabetical",
+    "Reverse my order"
+  ],
+  "navigation": [
+    "Focus",
+    "Upcoming",
+    "Missed",
+    "Unscheduled",
+    "All Tasks",
+    "Lists",
+    "New list",
+    "My Tasks",
+    "List actions",
+    "Sign in with Google",
+    "Properties",
+    "Support axiotask",
+    "Switch to*"
+  ],
+  "properties: sync": [
+    "Sync",
+    "Appearance",
+    "Account",
+    "About",
+    "Read-write sync",
+    "Auto-sync on startup",
+    "View activity",
+    "Sync now",
+    "Fresh sync",
+    "Backup",
+    "Close"
+  ],
+  "properties: appearance": [
+    "Theme",
+    "Light",
+    "Dark",
+    "Follow system",
+    "Collapse completed subtasks"
+  ],
+  "properties: account": [
+    "Google account",
+    "Sign in with Google",
+    "Switch account",
+    "Reset local data…"
+  ],
+  "properties: about": [
+    "axiotask",
+    "Version",
+    "Instance"
+  ],
+  "composer": [
+    "Set a due date",
+    "Add task",
+    "Add details",
+    "Close the composer"
+  ],
+  "task details": [
+    "Back",
+    "Task Details",
+    "Previous task",
+    "Next task",
+    "More actions",
+    "Due date",
+    "Subtasks",
+    "Add subtask"
+  ],
+  "task actions": [
+    "Duplicate",
+    "Delete"
+  ],
+  "quick dates": [
+    "Due date",
+    "Today",
+    "Tomorrow",
+    "Next week",
+    "Next month",
+    "Pick a date…",
+    "Clear"
+  ],
+  "selection": [
+    "Clear selection",
+    "Complete",
+    "Due",
+    "Move",
+    "Delete",
+    "1 selected",
+    "More bulk actions"
+  ],
+  "export": [
+    "Markdown",
+    "CSV",
+    "Include completed",
+    "Include notes",
+    "Include subtasks",
+    "Cancel",
+    "Copy",
+    "Share…"
+  ]
+}

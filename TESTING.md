@@ -28,6 +28,59 @@ build, the Linux build, and the xvfb integration smoke. Non-zero exit = not
 done. Any honoured `AXIOTASK_VERIFY_SKIP_*` prints `SKIPPED (env override)`, so
 a run that checked less than it looks like says so.
 
+## Guards that do not read the source
+
+Versions 1.5.4 to 1.5.12 replaced the whole code base together with its tests.
+Every test passed, because every test had been written for the new code, and
+nothing compared the new program with the one people were already using. It
+moved the data directory, needed a hand-written configuration file, shipped
+without the Google client, could not start next to older data, and on phones
+lost 21 of 36 everyday actions and several screens. 1.6.0 is 1.5.3 again.
+
+Two checks exist so that this cannot pass unnoticed a second time. They run the
+**built program**, import nothing from `lib/`, and therefore keep their meaning
+whatever happens to the code:
+
+- `tool/verify_first_start.py <bundle>` starts the Linux bundle in disposable
+  home directories: first start without setup, restarts, XDG overrides, awkward
+  paths, leftovers of other versions, an unreadable database, the data of every
+  earlier release recorded in `tool/first_start_fixtures/`, and a start on top
+  of the newest published release. Release builds must carry the Google client.
+- `tool/verify_android_app.py --apk <apk>` installs the APK on a disposable
+  emulator or device (over the newest published APK when `--previous-apk` is
+  given) and uses it through the labels on the screen: every control listed in
+  `tool/android_surface.json`, capture, restart, Duplicate, completion, Undo,
+  both swipes, selection and export.
+
+Both run in the gate on every push and pull request, and again in the release
+workflow on the exact files that are about to be published. The release
+workflow also refuses a commit the gate has not passed.
+
+Rules for changing them:
+
+- **A control may be added freely; removing or renaming one** requires editing
+  `tool/android_surface.json` in the same commit, so the removal shows up in
+  review as a decision.
+- **Every release adds its data fixture**: after publishing, run
+  `tool/verify_first_start.py <released bundle> --write-fixture <version>` and
+  commit the file. Later versions must open that data and keep every row.
+  The application wipes a database whose schema fingerprint differs from its
+  own (see `lib/src/store/database.dart`), so a schema change fails this check
+  until it migrates the recorded data.
+- **The constants at the top of `verify_first_start.py`** (data directory,
+  file names) describe users' disks. They change only together with a
+  migration and a scenario proving it.
+- Neither script may import from the application or be given a "skip" switch.
+
+Run them locally before tagging:
+
+```bash
+flutter build linux --release
+tool/verify_first_start.py build/linux/x64/release/bundle \
+  --previous "$(tool/fetch_previous_release.sh /tmp/previous)"
+tool/verify_android_app.py --apk build/app/outputs/flutter-apk/app-release.apk
+```
+
 ## Tests assert what the user sees
 
 A test states an outcome: what renders, what state a provider exposes, what the
