@@ -156,6 +156,18 @@ class Device:
                  str(y), '250')
         time.sleep(1.5)
 
+    def scroll(self, direction):
+        """Moves the content of the screen by about a third of its height."""
+        if not hasattr(self, 'size'):
+            self.size = tuple(map(int, re.findall(
+                r'\d+', self.adb('shell', 'wm', 'size').splitlines()[-1])))
+        width, height = self.size
+        low, high = height * 2 // 3, height // 3
+        start, end = (low, high) if direction == 'down' else (high, low)
+        self.adb('shell', 'input', 'swipe', str(width // 2), str(start),
+                 str(width // 2), str(end), '400')
+        time.sleep(1)
+
     def type(self, text):
         self.adb('shell', 'input', 'text', text.replace(' ', '%s'))
         time.sleep(0.5)
@@ -209,15 +221,27 @@ def start(device):
 
 
 def expect_surface(device, screen, surface):
-    present = device.labels()
-    first_lines = {label.split('\n')[0] for label in present}
-    missing = [
-        label for label in surface[screen]
-        if not (label in first_lines
-                or (label.endswith('*')
-                    and any(line.startswith(label[:-1])
-                            for line in first_lines)))
-    ]
+    """Every control of [screen] is offered, scrolling when the screen is
+    too small to show them at once."""
+    def missing_from(first_lines):
+        return [
+            label for label in surface[screen]
+            if not (label in first_lines
+                    or (label.endswith('*')
+                        and any(line.startswith(label[:-1])
+                                for line in first_lines)))
+        ]
+
+    seen = {label.split('\n')[0] for label in device.labels()}
+    missing = missing_from(seen)
+    scrolled = 0
+    while missing and scrolled < 4:
+        device.scroll('down')
+        scrolled += 1
+        seen |= {label.split('\n')[0] for label in device.labels()}
+        missing = missing_from(seen)
+    for _ in range(scrolled):
+        device.scroll('up')
     if missing:
         device.capture(f'missing-{screen}')
         raise Failed(
@@ -243,10 +267,18 @@ def checks(surface, version):
         device.back()
         device.tap('Open navigation menu')
         expect_surface(device, 'navigation', surface)
+        for _ in range(4):
+            if device.find('Properties'):
+                break
+            device.scroll('down')  # the drawer's footer on a short screen
         device.tap('Properties')
         expect_surface(device, 'properties: sync', surface)
+        previous = 'Sync'
         for tab in ('Appearance', 'Account', 'About'):
+            if not device.find(tab):
+                device.swipe(previous, 'left')  # a narrow tab bar scrolls
             device.tap(tab)
+            previous = tab
             expect_surface(device, f'properties: {tab.lower()}', surface)
         shown = [label for label in device.labels()
                  if label.startswith('Version')]
@@ -260,9 +292,10 @@ def checks(surface, version):
         expect_surface(device, 'composer', surface)
         device.type(task)
         device.key('KEYCODE_ENTER')
-        device.wait(row)
+        # On a short screen the keyboard covers the list while composing.
         device.tap('Close the composer')
         device.wait('New task')
+        device.wait(row)
 
     def task_survives_restart(device):
         device.stop()
