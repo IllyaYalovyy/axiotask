@@ -182,12 +182,15 @@ jobs:
           cp build/app/outputs/flutter-apk/app-release.apk \
              "dist/axiotask-${GITHUB_REF_NAME#v}.apk"
 
-      - name: Verify the APK is NOT debug-signed
+      # The OAuth-registered certificate is pinned by fingerprint. Its subject
+      # is "Android Debug" for historical reasons, so the subject cannot tell
+      # it from a throwaway debug key; only the fingerprint can.
+      - name: Verify the APK is signed with the OAuth-registered certificate
         run: |
           apksigner=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort | tail -1)
           "$apksigner" verify --print-certs "dist/axiotask-${GITHUB_REF_NAME#v}.apk" | tee dist/ANDROID_SIGNING_CERT.txt
-          if grep -qi 'CN=Android Debug' dist/ANDROID_SIGNING_CERT.txt; then
-            echo "::error::the APK was signed with the debug key — the ANDROID_KEYSTORE_* secrets did not reach the build"
+          if ! grep -qi 'SHA-256 digest: 1935e06653e69ddaf6e616a6f2c35b53425f14a3e94cd8daaf219338757cb796' dist/ANDROID_SIGNING_CERT.txt; then
+            echo "::error::the APK is not signed with the OAuth-registered certificate — Google sign-in would fail and existing installations could not update"
             exit 1
           fi
 

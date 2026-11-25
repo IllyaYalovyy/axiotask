@@ -72,6 +72,15 @@
   <content_rating type="oars-1.1"/>
 
   <releases>
+    <release version="1.6.0" date="2026-11-24">
+      <description>
+        <p>
+          Returns to the 1.5.3 application. Versions 1.5.4 to 1.5.12 were a
+          rewrite that is withdrawn; this release carries the 1.5.3 features
+          and behavior under a newer version number.
+        </p>
+      </description>
+    </release>
     <release version="1.5.3" date="2026-11-02">
       <description>
         <p>
