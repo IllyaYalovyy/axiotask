@@ -273,8 +273,17 @@ jobs:
       # a manifest edit, a plugin bump or a Gradle/AGP change breaks here and
       # nowhere else. Debug only — no signing secrets are needed, and release
       # signing (#196) is still an operator step.
+      # Gradle downloads its plugins from public repositories that now and
+      # then answer 429 or time out. That says nothing about this commit, so
+      # the build is retried; a real build error fails all three attempts.
       - name: flutter build apk --debug
-        run: flutter build apk --debug
+        run: |
+          for attempt in 1 2 3; do
+            flutter build apk --debug && exit 0
+            echo "::warning::APK build attempt $attempt failed"
+            sleep 60
+          done
+          exit 1
 
       # The built APK, used the way a person uses it: installed on a clean
       # emulator, started, and driven through the labels on the screen.
