@@ -39,10 +39,6 @@
     "Switch to*"
   ],
   "properties: sync": [
-    "Sync",
-    "Appearance",
-    "Account",
-    "About",
     "Read-write sync",
     "Auto-sync on startup",
     "View activity",
