@@ -31,6 +31,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Ignored local evidence folders; stray Dart files there are not ours.
+    - test-results/**
+    - screenshots/**
 
 linter:
   rules:
