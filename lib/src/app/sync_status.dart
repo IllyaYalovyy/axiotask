@@ -188,9 +188,12 @@ class SyncRunEvent {
   /// `false`, and the footer stays silent for it.
   final bool changed;
 
-  /// Whether the finished run ended in a failure. Failures keep their existing
-  /// toast/status path — the line simply goes, it never turns red — but a
-  /// failed run has, by definition, confirmed nothing.
+  /// Whether the finished run ended in a failure, or left a pull incomplete.
+  /// This flag does not colour the sync line: the line turns red for
+  /// [SyncStatusView.needsAttention] (a permanent failure) or
+  /// [SyncStatusView.needsReauth] (a dead session), so a transient blip on its
+  /// own never turns it red. A failed run has, by definition, confirmed
+  /// nothing.
   final bool failed;
 
   @override
