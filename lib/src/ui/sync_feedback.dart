@@ -9,19 +9,19 @@
 //
 // So two marks, and deliberately no third:
 //
-//   • [SyncProgressLine] — a 2dp line at the bottom edge of the app bar for as
-//     long as a run is in flight: indeterminate while it runs, filling to the
-//     end when it finishes, then fading away. It is OVERLAID, never stacked
-//     into the layout, so a sync starting can never move a row.
+//   • [SyncProgressLine] — a 2dp line at the bottom edge of the app bar:
+//     indeterminate while a run is in flight, filling to the end when it
+//     finishes, then fading away. It also stays up in amber while changes wait
+//     to be sent, and in red while sync cannot succeed without help. It is
+//     OVERLAID, never stacked into the layout, so no state can move a row.
 //   • [SyncCheckMark] — a check drawn over the footer's status dot, and ONLY
 //     for a run that actually moved data. The once-a-minute poll that finds
 //     nothing stays completely silent; a footer that congratulated itself
 //     sixty times an hour would be noise, not feedback.
 //
-// Never a spinner, never a dialog, never a success toast. A failed run keeps
-// its existing toast/status path: the line just goes, it never turns red — a
-// red line at the top of the window is an alarm, and a transient blip that the
-// next cadence tick fixes is not one.
+// Never a spinner, never a dialog, never a success toast. A red line is an
+// alarm, so only a permanent failure or a dead session raises it: a transient
+// blip that the next cadence tick fixes does not.
 //
 // Rows changed by a pull get the commit flash (#252); that IS the "what
 // changed" feedback, so nothing here repeats it.
@@ -37,9 +37,27 @@ import 'motion.dart';
 /// band that appeared.
 const double kSyncLineHeight = 2;
 
-/// The quiet sync line: present while [running], then a fill and a fade.
+/// What the line says beyond "a run is in flight". Ordered by priority: either
+/// of these outranks a running sync.
+enum SyncLineAlert {
+  /// Local changes are waiting to be sent and nothing is sending them.
+  pending,
+
+  /// A permanent failure or a dead session: sync needs the user.
+  attention,
+}
+
+/// The "changes waiting" amber. Material 3 has no warning role, so it is stated
+/// here, one tone per brightness, each at least 3:1 against the app bar.
+Color syncPendingColor(Brightness brightness) => switch (brightness) {
+  Brightness.light => const Color(0xFFB26A00),
+  Brightness.dark => const Color(0xFFFFC107),
+};
+
+/// The quiet sync line: present while [running], then a fill and a fade; solid
+/// for as long as there is an [alert].
 ///
-/// Pure — it takes a bool, not a provider — so the shell can mount it without
+/// Pure — it takes values, not providers — so the shell can mount it without
 /// a [ProviderScope] and a golden can pin it mid-run. [LiveSyncLine] is the
 /// wired one.
 ///
@@ -51,10 +69,14 @@ const double kSyncLineHeight = 2;
 /// indicator does — a bar that says "working" cannot say it while holding
 /// still.
 class SyncProgressLine extends StatefulWidget {
-  const SyncProgressLine({required this.running, super.key});
+  const SyncProgressLine({required this.running, this.alert, super.key});
 
   /// Whether a sync run is in flight right now.
   final bool running;
+
+  /// The condition the line holds a solid colour for, replacing the progress
+  /// drawing until it is cleared, or `null` when there is none.
+  final SyncLineAlert? alert;
 
   @override
   State<SyncProgressLine> createState() => _SyncProgressLineState();
@@ -113,6 +135,8 @@ class _SyncProgressLineState extends State<SyncProgressLine>
   }
 
   Widget _line(ColorScheme colors) {
+    final alert = widget.alert;
+    if (alert != null) return _alertBar(colors, alert);
     if (widget.running) return _bar(colors, null, 1);
     final t = _finish.value;
     // The finish is over — the line is not merely invisible, it is GONE: out
@@ -122,6 +146,28 @@ class _SyncProgressLineState extends State<SyncProgressLine>
     const fillEnd = MotionDurations.syncLineFillFraction;
     if (t < fillEnd) return _bar(colors, t / fillEnd, 1);
     return _bar(colors, 1, 1 - (t - fillEnd) / (1 - fillEnd));
+  }
+
+  /// A still, full-width band. Not a progress indicator: nothing is progressing,
+  /// and a screen reader should hear the state rather than a percentage.
+  Widget _alertBar(ColorScheme colors, SyncLineAlert alert) {
+    final (color, label) = switch (alert) {
+      SyncLineAlert.pending => (
+        syncPendingColor(colors.brightness),
+        'Changes waiting to sync',
+      ),
+      SyncLineAlert.attention => (colors.error, 'Sync needs attention'),
+    };
+    // It stays up indefinitely over the toolbar's edge, so it takes no taps.
+    return IgnorePointer(
+      child: Semantics(
+        container: true,
+        label: label,
+        child: SizedBox.expand(
+          child: ColoredBox(key: const Key('sync-state-line'), color: color),
+        ),
+      ),
+    );
   }
 
   Widget _bar(ColorScheme colors, double? value, double opacity) {
@@ -156,14 +202,29 @@ class _SyncProgressLineState extends State<SyncProgressLine>
 ///
 /// A widget rather than a flag threaded down the tree: the scaffold stays
 /// provider-free (it renders in tests that mount it with no [ProviderScope]),
-/// and a run starting or ending rebuilds THIS — never the shell or the list
-/// under it.
+/// and a sync state change rebuilds THIS — never the shell or the list under
+/// it.
 class LiveSyncLine extends ConsumerWidget {
   const LiveSyncLine({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) =>
-      SyncProgressLine(running: ref.watch(syncRunningProvider));
+  Widget build(BuildContext context, WidgetRef ref) {
+    final running = ref.watch(syncRunningProvider);
+    final needsAttention = ref.watch(
+      syncStatusViewProvider.select((s) => s.needsAttention || s.needsReauth),
+    );
+    // Either source of a dead session counts, as in the footer.
+    final needsReauth = ref.watch(needsReauthProvider);
+    final pending = (ref.watch(pendingPushCountProvider).value ?? 0) > 0;
+    return SyncProgressLine(
+      running: running,
+      alert: needsAttention || needsReauth
+          ? SyncLineAlert.attention
+          : pending && !running
+          ? SyncLineAlert.pending
+          : null,
+    );
+  }
 }
 
 /// Draws a check over [child] each time [runs] increases.
