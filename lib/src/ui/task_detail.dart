@@ -812,6 +812,14 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                   completedCount: completedCount,
                   totalCount: children.length,
                 ),
+                // First in the section: a new subtask lands at the TOP of the
+                // checklist, so the row appears right under the input (#304).
+                AddSubtaskField(
+                  controller: _newSubtask,
+                  focusNode: _newSubtaskFocus,
+                  onSubmit: () => _addSubtask(current),
+                  showHint: children.isEmpty,
+                ),
                 // The OPEN checklist — a reorderable list, shrink-wrapped and
                 // non-scrolling because the panel's own ListView is what
                 // scrolls. A drag anywhere in it is one anchored, undoable
@@ -884,12 +892,6 @@ class _TaskDetailState extends ConsumerState<TaskDetail> {
                       ),
                     ),
                 ],
-                AddSubtaskField(
-                  controller: _newSubtask,
-                  focusNode: _newSubtaskFocus,
-                  onSubmit: () => _addSubtask(current),
-                  showHint: children.isEmpty,
-                ),
               ],
               // Derived reading matter, not an edited field: it trails the
               // whole panel rather than splitting notes from the subtasks.
