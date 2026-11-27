@@ -162,7 +162,7 @@ class RowActions {
   }
 
   /// Toggle [stored]'s completion. A COMPLETION (checkbox tick or swipe-right,
-  /// the primary mobile gesture) surfaces a 30-second Undo toast whose token
+  /// the primary mobile gesture) surfaces a 5-second Undo toast whose token
   /// carries the exact cascade set, so undo restores the pre-swipe state — an
   /// already-completed subtask is never reopened. A reopen is silent (no toast).
   Future<void> toggle(StoredTask stored) async {
@@ -182,7 +182,7 @@ class RowActions {
     );
   }
 
-  /// Delete [t] with a 30-second Undo toast (mirrors the detail panel's
+  /// Delete [t] with a 5-second Undo toast (mirrors the detail panel's
   /// delete).
   Future<void> delete(StoredTask t) async {
     haptics.confirm(); // a removal is felt more firmly than a tick (#257)

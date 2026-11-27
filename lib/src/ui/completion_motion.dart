@@ -13,7 +13,7 @@
 // 140…320ms  the collapse — ONLY when the row is leaving the filtered list: its
 //             height animates to zero and the rows below slide up.
 //
-// Un-completing (the 30-second Undo toast, or the checkbox again) plays the same
+// Un-completing (the 5-second Undo toast, or the checkbox again) plays the same
 // controller backwards: the row re-expands into place, then the strike lifts —
 // it never pops in. [MediaQuery.disableAnimations] (Android "remove animations",
 // desktop reduced motion) jumps straight to the end state instead.

@@ -132,7 +132,7 @@ class ListChoreographer {
   final Map<String, _Departing> _departing = {};
 
   // Ids that came BACK while (or just after) collapsing — an Undo inside the
-  // 30-second toast. Their row starts folded so it expands into place.
+  // 5-second toast. Their row starts folded so it expands into place.
   final Set<String> _returning = {};
 
   // Rows kept on screen ONLY to play their #251 leave.

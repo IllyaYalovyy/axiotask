@@ -6,6 +6,10 @@
 // stack coexists: a sync-error toast raised while an undo toast is up must not
 // evict the undo (the user must still be able to undo).
 //
+// There is at most ONE Undo toast: a new undoable action replaces the previous
+// Undo toast in its place, so the feedback does not grow with the number of
+// changes. The earlier action simply stays done.
+//
 // The overlay mounts ABOVE the router's Navigator (via MaterialApp.builder), so
 // a toast out-stacks every modal overlay — dialogs, the detail panel, pickers.
 // That is invariant #11 made structural: feedback that a modal paints over
@@ -17,7 +21,7 @@
 // Auto-dismiss runs on a per-toast [RestartableTimer] (package:async — the repo
 // bans a raw dart:async `Timer` below lib/): cancellable, so a dismiss or a
 // [ToastController.dispose] tears its timer down and no widget test ends with a
-// pending 30-second undo timer.
+// pending undo timer.
 //
 // ── Motion (#258) ──────────────────────────────────────────────────────────
 // Before this the surface had none: a card existed on one frame and not on the
@@ -30,8 +34,8 @@
 //
 // Three things follow from a toast being a DEADLINE rather than a notice:
 //
-//   • an action toast draws a countdown along its bottom edge, so the 30-second
-//     undo window is visible instead of ending as a surprise;
+//   • an action toast draws a countdown along its bottom edge, so the undo
+//     window is visible instead of ending as a surprise;
 //   • a pointer resting on the card (hover on the desktop, a finger on the
 //     phone) HOLDS that deadline — and holds the bar with it, so the pause is
 //     something the user can see. Release restarts the full span, because the
@@ -44,8 +48,8 @@
 // Past [kToastStackLimit] cards the stack stops growing and collapses to the
 // NEWEST card with a "+N" pill. Collapsed toasts are HIDDEN, not dropped: they
 // keep their own lives, and one that outlives the cards covering it comes back
-// on its own — which is what keeps the #172 promise that an undo raised behind
-// a wall of errors is still reachable.
+// on its own. The Undo toast is the exception: its short life would lapse while
+// hidden, so it stays on screen beside the newest card (#70, #172).
 //
 // Reduced motion resolves the enter/exit spans to zero — a card is simply
 // there, or simply gone — but it does NOT delete the countdown, which is
@@ -76,7 +80,7 @@ const Duration kErrorToastDuration = Duration(seconds: 5);
 const Duration kInfoToastDuration = Duration(seconds: 4);
 
 /// How long an undo toast stays reachable before it lapses.
-const Duration kUndoToastDuration = Duration(seconds: 30);
+const Duration kUndoToastDuration = Duration(seconds: 5);
 
 /// How far a toast travels as it arrives, and back as it leaves (#258). Far
 /// enough that the card is read as coming FROM somewhere, short enough that it
@@ -107,10 +111,15 @@ class ToastData {
     this.onUndo,
     this.actionLabel,
     this.life,
-  });
+    int? slot,
+  }) : slot = slot ?? id;
 
-  /// A process-unique id (the stack key and the dismiss handle).
+  /// A process-unique id (the dismiss handle).
   final int id;
+
+  /// The place in the stack: the toast's own [id], unless it is an Undo toast
+  /// that replaced another one and so took over that one's place.
+  final int slot;
 
   /// The user-visible text (already redacted for errors).
   final String message;
@@ -136,6 +145,9 @@ class ToastData {
   /// pointer: a bar on a card with nothing to act on measures nothing the user
   /// can do anything about, and a hold no bar explains is invisible behaviour.
   bool get hasCountdown => onUndo != null && life != null;
+
+  /// Whether this is an Undo toast: its action is the unlabelled one.
+  bool get isUndo => onUndo != null && actionLabel == null;
 }
 
 /// Owns the live toast list and each toast's auto-dismiss timer. A
@@ -150,12 +162,14 @@ class ToastController extends ChangeNotifier {
   int _seq = 0;
   bool _disposed = false;
 
-  /// The live stack, oldest first.
+  /// The live stack in [ToastData.slot] order: oldest first, except that a
+  /// replacing Undo toast keeps its predecessor's place.
   List<ToastData> get toasts => List<ToastData>.unmodifiable(_toasts);
 
   /// Show a toast; returns its id. [duration] `null` means it persists until
   /// dismissed (or reverted). [onUndo] wires the action button, [actionLabel]
-  /// names it (defaults to "Undo").
+  /// names it (defaults to "Undo"). An Undo toast replaces the live one, if
+  /// any, whose action then simply stays done.
   int show(
     String message, {
     ToastVariant variant = ToastVariant.info,
@@ -164,20 +178,28 @@ class ToastController extends ChangeNotifier {
     Duration? duration,
   }) {
     final id = _seq++;
-    _toasts.add(
-      ToastData(
-        id: id,
-        message: message,
-        variant: variant,
-        onUndo: onUndo,
-        actionLabel: actionLabel,
-        life: duration,
-      ),
+    final replaced = onUndo != null && actionLabel == null
+        ? _toasts.indexWhere((t) => t.isUndo)
+        : -1;
+    final toast = ToastData(
+      id: id,
+      message: message,
+      variant: variant,
+      onUndo: onUndo,
+      actionLabel: actionLabel,
+      life: duration,
+      slot: replaced < 0 ? null : _toasts[replaced].slot,
     );
+    if (replaced < 0) {
+      _toasts.add(toast);
+    } else {
+      _timers.remove(_toasts[replaced].id)?.cancel();
+      _toasts[replaced] = toast;
+    }
     if (duration != null) {
       // Auto-dismiss via a cancellable RestartableTimer (never a raw Timer —
       // banned below lib/ as an uncontrollable time source). Stored so dismiss
-      // and dispose can cancel it: no widget test ends with a pending 30s undo
+      // and dispose can cancel it: no widget test ends with a pending undo
       // timer, and an already-dismissed toast's timer never fires late.
       _timers[id] = RestartableTimer(duration, () {
         if (!_disposed) dismiss(id);
@@ -222,7 +244,8 @@ class ToastController extends ChangeNotifier {
   }
 
   /// Show an undo toast: a message plus an Undo button that runs [onUndo] and
-  /// then dismisses the toast. Lasts [duration] (default 30s) if not acted on.
+  /// then dismisses the toast. Lasts [duration] (default 5s) if not acted on,
+  /// and replaces any Undo toast already up.
   int showUndo(
     String message,
     VoidCallback onUndo, {
@@ -340,33 +363,37 @@ class ToastStack extends StatefulWidget {
 
 class _ToastStackState extends State<ToastStack> {
   /// Every card currently on screen — the shown ones plus any still leaving —
-  /// keyed by id. Ids are handed out in order, so sorting the keys IS oldest
-  /// first.
+  /// keyed by [ToastData.slot], so a replacing Undo toast takes over its
+  /// predecessor's card. Sorting the keys IS top to bottom.
   final Map<int, ToastData> _cards = <int, ToastData>{};
 
   /// The toasts that get a card of their own right now: everything, until the
-  /// stack passes [kToastStackLimit] and collapses to the newest.
+  /// stack passes [kToastStackLimit] and collapses to the newest, keeping the
+  /// Undo toast beside it.
   List<ToastData> get _shown {
     final live = widget.controller.toasts;
     if (live.length <= kToastStackLimit) return live;
-    return <ToastData>[live.last];
+    return <ToastData>[
+      for (final t in live)
+        if (t.isUndo || t == live.last) t,
+    ];
   }
 
   /// Drop a card once its exit has played — unless the toast came BACK first
   /// (a collapsed one uncovered by the cards above it lapsing), in which case
   /// the card is arriving again and must stay.
-  void _drop(int id) {
-    if (!mounted || _shown.any((t) => t.id == id)) return;
-    setState(() => _cards.remove(id));
+  void _drop(int slot) {
+    if (!mounted || _shown.any((t) => t.slot == slot)) return;
+    setState(() => _cards.remove(slot));
   }
 
   /// A swipe IS the exit (#258): the card has already left under the finger, so
   /// it is taken out of the render set in the same frame rather than fading a
   /// second time. Undo is deliberately not taken — throwing the toast away and
   /// reversing the action are different intentions.
-  void _swipedAway(int id) {
-    setState(() => _cards.remove(id));
-    widget.controller.dismiss(id);
+  void _swipedAway(ToastData t) {
+    setState(() => _cards.remove(t.slot));
+    widget.controller.dismiss(t.id);
   }
 
   @override
@@ -375,15 +402,22 @@ class _ToastStackState extends State<ToastStack> {
       animation: widget.controller,
       builder: (context, _) {
         final shown = _shown;
-        // A LinkedHashSet — insertion-ordered, and [_shown] is oldest first, so
-        // `lastOrNull` is the newest toast on screen.
-        final shownIds = <int>{for (final t in shown) t.id};
+        // A LinkedHashSet — insertion-ordered, and [_shown] is in slot order, so
+        // `lastOrNull` is the bottom toast on screen.
+        final shownSlots = <int>{for (final t in shown) t.slot};
         for (final t in shown) {
-          _cards[t.id] = t;
+          _cards[t.slot] = t;
+        }
+        // An Undo toast that lapsed or was taken may still be leaving; the next
+        // one must not share the screen with it.
+        if (shown.any((t) => t.isUndo)) {
+          _cards.removeWhere(
+            (slot, t) => t.isUndo && !shownSlots.contains(slot),
+          );
         }
         if (_cards.isEmpty) return const SizedBox.shrink();
         final overflow = widget.controller.toasts.length - shown.length;
-        final ids = _cards.keys.toList()..sort();
+        final slots = _cards.keys.toList()..sort();
         final coarse = coarsePointerPlatform(Theme.of(context).platform);
         return SafeArea(
           child: Align(
@@ -396,23 +430,28 @@ class _ToastStackState extends State<ToastStack> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: <Widget>[
-                    for (final id in ids)
+                    for (final slot in slots)
+                      // Keyed by slot, so a replacement does not arrive again;
+                      // the fade layer is keyed by id, so its card (hold,
+                      // countdown) starts afresh.
                       _ToastMotion(
-                        key: ValueKey<int>(id),
-                        id: id,
-                        shown: shownIds.contains(id),
-                        onGone: () => _drop(id),
+                        key: ValueKey<int>(slot),
+                        id: _cards[slot]!.id,
+                        shown: shownSlots.contains(slot),
+                        onGone: () => _drop(slot),
                         child: Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: _card(
-                            _cards[id]!,
+                            _cards[slot]!,
                             // The pill belongs to the card the stack collapsed
-                            // ONTO — the newest SHOWN toast. Never to a card
+                            // ONTO — the bottom SHOWN toast. Never to a card
                             // that is only still here to play its exit: when
                             // the collapsed card is itself dismissed, the pill
                             // has to move to the one arriving behind it on the
                             // same frame, not ride the one leaving.
-                            overflow: id == shownIds.lastOrNull ? overflow : 0,
+                            overflow: slot == shownSlots.lastOrNull
+                                ? overflow
+                                : 0,
                             coarse: coarse,
                           ),
                         ),
@@ -456,7 +495,7 @@ class _ToastStackState extends State<ToastStack> {
       direction: DismissDirection.down,
       // No resize phase: the slot goes with the card, in the same frame.
       resizeDuration: null,
-      onDismissed: (_) => _swipedAway(t.id),
+      onDismissed: (_) => _swipedAway(t),
       child: card,
     );
   }
@@ -633,7 +672,7 @@ class _ToastCardState extends State<ToastCard> {
     });
     // Only the ANSWER changing is news: a mouse pressing and releasing over a
     // card it never left has not stopped resting on it, and must not hand the
-    // toast a fresh thirty seconds on every click.
+    // toast a fresh life on every click.
     if (_held != was) widget.onHold?.call(_held);
   }
 
@@ -824,10 +863,10 @@ class _ToastCountdownState extends State<_ToastCountdown>
     final stepped = !Motion.of(context).enabled;
     final steps = widget.life.inSeconds;
     return RepaintBoundary(
-      // The longest-running animation in the app by an order of magnitude: an
-      // undo toast keeps this ticking for thirty seconds. Its own layer, so
-      // those frames repaint a 3dp line and not the card — and not the list
-      // behind it — on a phone that is otherwise idle.
+      // A long-running animation: an undo toast keeps this ticking for its
+      // whole life. Its own layer, so those frames repaint a 3dp line and not
+      // the card — and not the list behind it — on a phone that is otherwise
+      // idle.
       child: SizedBox(
         height: kToastCountdownThickness,
         child: AnimatedBuilder(

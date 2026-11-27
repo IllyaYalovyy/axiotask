@@ -197,14 +197,14 @@ void main() {
     testWidgets(
       'disposing the controller cancels a pending auto-dismiss timer',
       (tester) async {
-        // Regression guard for the migration: undo toasts live 30s. If their
+        // Regression guard for the migration: undo toasts are timed. If their
         // timer were an uncancellable Future.delayed, a widget test that raised
         // one and ended would leave a pending timer (a teardown failure).
         // dispose() must cancel it — proven by ending the test WITHOUT pumping
-        // past the 30s life: a leaked timer fails with "A Timer is still
+        // past the life: a leaked timer fails with "A Timer is still
         // pending", so this test passing IS the guarantee.
         final c = ToastController();
-        c.showUndo('Deleted "x"', () {}); // schedules the 30s timer
+        c.showUndo('Deleted "x"', () {}); // schedules the undo timer
         c.dispose(); // must cancel it
       },
     );
@@ -420,7 +420,7 @@ void main() {
     testWidgets('the Undo toast shows how much of its life is left', (
       tester,
     ) async {
-      // The failure this prevents: the 30s undo window is invisible, so the
+      // The failure this prevents: the undo window is invisible, so the
       // toast's disappearance is a surprise and the user learns not to rely
       // on it.
       final c = await pumpOverlay(tester);
@@ -470,7 +470,7 @@ void main() {
       final held = barWidth(tester, id);
       expect(held, lessThan(full));
 
-      // Well past the 30s life, with the pointer still on the card.
+      // Well past the whole life, with the pointer still on the card.
       await tester.pump(kUndoToastDuration);
       expect(barWidth(tester, id), held, reason: 'the drain is held');
       expect(
@@ -532,8 +532,8 @@ void main() {
       expect(afterOne, lessThan(full), reason: 'past 1s it has stepped once');
       expect(
         afterOne,
-        closeTo(full * 29 / 30, 1.0),
-        reason: 'exactly one of the 30 steps',
+        closeTo(full * 4 / 5, 1.0),
+        reason: 'exactly one of the 5 steps',
       );
       await flush(tester);
     });
@@ -695,32 +695,168 @@ void main() {
       await flush(tester);
     });
 
-    testWidgets('a collapsed Undo is HIDDEN, not lost: it comes back', (
-      tester,
-    ) async {
-      // The #172/F19 invariant under the new rule — an undo out-stacked by two
-      // errors is not destroyed. The errors lapse after 5s and the undo, which
-      // has 30, is on screen again with its button.
+    testWidgets('a collapsing stack never hides Undo', (tester) async {
+      // The #70/#172 invariant: errors must not hide Undo. Its life is as short
+      // as theirs, so hiding it until they lapse would lose it.
+      var undone = 0;
       final c = await pumpOverlay(tester);
-      c.showUndo('Deleted "Buy milk"', () {});
+      c.showUndo('Deleted "Buy milk"', () => undone++);
       c.showError('one');
       c.showError('two');
       await tester.pump();
       await settleMotion(tester);
       await settleMotion(tester);
 
-      expect(find.byType(ToastCard), findsOneWidget);
+      expect(find.byType(ToastCard), findsNWidgets(2));
+      expect(find.text('one'), findsNothing);
       expect(find.text('two'), findsOneWidget);
-      expect(find.text('+2'), findsOneWidget);
-      expect(find.text('Deleted "Buy milk"'), findsNothing);
+      // The pill counts the hidden error, on the error card, not on Undo's.
+      expect(
+        find.descendant(
+          of: find.widgetWithText(ToastCard, 'two'),
+          matching: find.text('+1'),
+        ),
+        findsOneWidget,
+      );
 
-      await tester.pump(kErrorToastDuration);
+      await tester.tap(find.widgetWithText(TextButton, 'Undo'));
+      await tester.pump();
+      expect(undone, 1);
+      await flush(tester);
+    });
+  });
+
+  group('one Undo toast', () {
+    const fiveSeconds = Duration(seconds: 5);
+
+    Rect cardRect(WidgetTester tester, String message) =>
+        tester.getRect(find.widgetWithText(ToastCard, message));
+
+    testWidgets('an untouched Undo toast is gone after 5 seconds', (
+      tester,
+    ) async {
+      final c = await pumpOverlay(tester);
+      c.showUndo('Deleted "Buy milk"', () {});
+      await tester.pump();
+
+      await tester.pump(fiveSeconds - const Duration(milliseconds: 1));
+      expect(c.toasts, hasLength(1));
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(c.toasts, isEmpty);
       await settleMotion(tester);
+      await tester.pump();
+      expect(find.byType(ToastCard), findsNothing);
+    });
+
+    testWidgets('five actions in quick succession leave one card in place', (
+      tester,
+    ) async {
+      final undone = <int>[];
+      final c = await pumpOverlay(tester, platform: TargetPlatform.android);
+      c.showUndo('Deleted "task 0"', () => undone.add(0));
+      await tester.pump();
       await settleMotion(tester);
-      expect(find.byType(ToastCard), findsOneWidget);
-      expect(find.text('Deleted "Buy milk"'), findsOneWidget);
+      final single = cardRect(tester, 'Deleted "task 0"');
+
+      for (var i = 1; i <= 5; i++) {
+        await tester.pump(const Duration(seconds: 1));
+        c.showUndo('Deleted "task $i"', () => undone.add(i));
+        await tester.pump();
+        // On the very frame it is raised: no second card, no arrival travel.
+        expect(find.byType(ToastCard), findsOneWidget);
+        expect(cardRect(tester, 'Deleted "task $i"'), single);
+        expect(find.textContaining('+'), findsNothing);
+      }
+
+      // The newest has a full life of its own, bar included.
+      final id = c.toasts.single.id;
+      expect(barWidth(tester, id), closeTo(single.width, 0.01));
+      await tester.pump(fiveSeconds - const Duration(milliseconds: 1));
+      expect(c.toasts.single.id, id);
+
+      await tester.tap(find.text('Undo'));
+      await tester.pump();
+      expect(undone, <int>[5], reason: 'only the newest action is reverted');
+      await flush(tester);
+      expect(find.byType(ToastCard), findsNothing);
+    });
+
+    testWidgets('a replacement keeps its place beside an error toast', (
+      tester,
+    ) async {
+      final c = await pumpOverlay(tester);
+      c.showUndo('Deleted "task 1"', () {});
+      c.showError('Sync failed');
+      await tester.pump();
+      await settleMotion(tester);
+      final undo = cardRect(tester, 'Deleted "task 1"');
+      final error = cardRect(tester, 'Sync failed');
+
+      c.showUndo('Deleted "task 2"', () {});
+      await tester.pump();
+
+      expect(find.byType(ToastCard), findsNWidgets(2));
+      expect(cardRect(tester, 'Deleted "task 2"'), undo);
+      expect(cardRect(tester, 'Sync failed'), error);
       expect(find.widgetWithText(TextButton, 'Undo'), findsOneWidget);
-      expect(find.text('+2'), findsNothing);
+      await flush(tester);
+    });
+
+    testWidgets('a labelled action toast is not an Undo toast', (tester) async {
+      final c = await pumpOverlay(tester);
+      c.showAction('Added to Focus', actionLabel: 'View', onAction: () {});
+      c.showUndo('Deleted "task 1"', () {});
+      c.showUndo('Deleted "task 2"', () {});
+      await tester.pump();
+      await settleMotion(tester);
+
+      expect(c.toasts.map((t) => t.message), <String>[
+        'Added to Focus',
+        'Deleted "task 2"',
+      ]);
+      await flush(tester);
+    });
+
+    testWidgets('a pointer resting there holds the replacement too', (
+      tester,
+    ) async {
+      final c = await pumpOverlay(tester);
+      c.showUndo('Deleted "task 1"', () {});
+      await tester.pump();
+      await settleMotion(tester);
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await mouse.moveTo(tester.getCenter(find.byType(ToastCard)));
+      await tester.pump();
+
+      c.showUndo('Deleted "task 2"', () {});
+      await tester.pump();
+      await tester.pump(fiveSeconds * 2);
+      expect(find.text('Deleted "task 2"'), findsOneWidget);
+
+      await mouse.moveTo(Offset.zero);
+      await tester.pump();
+      await flush(tester);
+      expect(find.byType(ToastCard), findsNothing);
+    });
+
+    testWidgets('a new Undo does not share the screen with a leaving one', (
+      tester,
+    ) async {
+      final c = await pumpOverlay(tester);
+      final first = c.showUndo('Deleted "task 1"', () {});
+      await tester.pump();
+      await settleMotion(tester);
+
+      c.dismiss(first);
+      await tester.pump();
+      await tester.pump(MotionDurations.medium ~/ 2);
+      c.showUndo('Deleted "task 2"', () {});
+      await tester.pump();
+
+      expect(find.byType(ToastCard), findsOneWidget);
+      expect(find.text('Deleted "task 2"'), findsOneWidget);
       await flush(tester);
     });
   });
