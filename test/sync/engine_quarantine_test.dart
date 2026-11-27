@@ -59,7 +59,7 @@ void main() {
     // own engine, exactly as the scheduler builds one per tick.
     final poison = PoisonRegistry();
     Future<SyncOutcome> runSync() =>
-        SyncEngine.withPush(client, store, true, poison: poison).run();
+        SyncEngine(client, store, poison: poison).run();
     Future<String> serverTitle() async =>
         (await client.listTasks('L1')).items.single.title;
 

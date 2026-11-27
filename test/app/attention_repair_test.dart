@@ -62,7 +62,7 @@ Future<ConflictedPair> forkConflict(
   Store store,
   ConflictRegistry conflicts,
 ) async {
-  final eng = SyncEngine.withPush(client, store, true, conflicts: conflicts);
+  final eng = SyncEngine(client, store, conflicts: conflicts);
   await seedSyncedList(client, store, 'L1', 'Inbox');
   client.seedTask('L1', 'T1', 'server-version', '1');
   await eng.run();
@@ -126,7 +126,7 @@ void main() {
       );
 
       // …and the next sync actually lands it on the server.
-      await SyncEngine.withPush(client, store, true).run();
+      await SyncEngine(client, store).run();
       final onServer = await client.listTasks('L1');
       expect(onServer.items.map((t) => t.title), ['local-edit']);
     });
@@ -238,7 +238,6 @@ void main() {
         store: store,
         client: () => client,
         auth: _LiveAuth(),
-        pushEnabled: () => true,
         debounce: Duration.zero,
         period: const Duration(milliseconds: 1),
       );

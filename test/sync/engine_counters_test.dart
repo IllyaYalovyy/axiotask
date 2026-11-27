@@ -29,14 +29,12 @@ const _t0 = '2026-01-01T00:00:00Z';
 const _t1 = '2026-01-02T00:00:00Z';
 
 /// A fresh engine over an in-memory store and fake API, torn down with the test.
-Future<(FakeTasksApi, SyncEngine)> engine({bool push = true}) async {
+Future<(FakeTasksApi, SyncEngine)> engine() async {
   final client = FakeTasksApi();
   final db = await AppDatabase.openMemory();
   addTearDown(db.close);
   final store = Store(db);
-  final eng = push
-      ? SyncEngine.withPush(client, store, true)
-      : SyncEngine(client, store);
+  final eng = SyncEngine(client, store);
   return (client, eng);
 }
 
@@ -372,31 +370,6 @@ void main() {
       );
     });
 
-    test('two third levels flattened by a read-only sync', () async {
-      final (client, eng) = await engine(push: false);
-      await seedSyncedList(client, eng.store, 'L1', 'Inbox');
-      client.seedTask('L1', 'P', 'parent', '00000000000001');
-      client.seedTaskWithParent('L1', 'T', 'subtask', '00000000000002', 'P');
-      client.seedTaskWithParent('L1', 'C1', 'grandchild 1', '01', 'T');
-      client.seedTaskWithParent('L1', 'C2', 'grandchild 2', '02', 'T');
-
-      final out = await eng.run();
-
-      expect(out.conflicts, 2, reason: 'both third levels were repaired');
-      for (final id in ['C1', 'C2']) {
-        expect(
-          (await findByAnyId(eng.store, id))!.task.parent,
-          isNull,
-          reason: '$id renders as a top-level row (invariant #1)',
-        );
-      }
-      expect(
-        client.callCount(Method.moveTask),
-        0,
-        reason: 'a read-only sync sends no corrective move',
-      );
-    });
-
     test('two third levels repaired with a corrective move', () async {
       final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Inbox');
@@ -452,7 +425,7 @@ void main() {
     test('two un-acknowledged subtask creates under a nested parent', () async {
       // §G: the creates were queued while T was top-level; the pull then landed
       // T's remote demote under P, so OUR two queued rows are the third level.
-      final (client, eng) = await engine(push: false);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       client.seedTask('L1', 'P', 'parent', '00000000000001');
       client.seedTaskWithParent('L1', 'T', 'subtask', '00000000000002', 'P');
@@ -460,6 +433,9 @@ void main() {
       final t = await localIdOf(eng.store, 'T');
       await eng.store.upsertTask(dirtyTask('c1', 'L1', 'create', parent: t));
       await eng.store.upsertTask(dirtyTask('c2', 'L1', 'create', parent: t));
+      // Neither insert lands, so both rows are still queued at the D7 sweep.
+      client.failNext(Method.insertTask, () => const ServerError(503));
+      client.failNext(Method.insertTask, () => const ServerError(503));
 
       final out = await eng.run();
 

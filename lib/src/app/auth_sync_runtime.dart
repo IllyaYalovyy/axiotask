@@ -67,7 +67,6 @@ class AuthSyncRuntime {
       store: store,
       client: _currentClient,
       auth: auth,
-      pushEnabled: () => _config.pushEnabled,
       debounce: debounce,
       period: period,
     );
@@ -132,15 +131,14 @@ class AuthSyncRuntime {
   /// live auth/status streams (seeded then subscribed), the four action seams,
   /// and the real sidebar footer.
   List<Override> get overrides => [
-    // Runtime tests and production mount this same controller as the source
-    // for live sync-mode presentation in the sidebar/footer.
+    // The controller the app was built with, mounted for the widget tree.
     configControllerProvider.overrideWithValue(_config),
     authSnapshotProvider.overrideWith((ref) => _authSnapshots()),
     // Whether this install means to reach Google at all — the gate between a
     // loud missing-credentials state and a legitimately quiet local-only one
     // (#228). A startup condition, read once as the scope is built.
     syncIntendedProvider.overrideWithValue(
-      _config.autoSyncOnStart || _config.pushEnabled || _hasStoredSession(),
+      _config.autoSyncOnStart || _hasStoredSession(),
     ),
     syncStatusStreamProvider.overrideWith((ref) => _syncStatuses()),
     // The per-run signal the quiet sync line and the footer check-mark ride
@@ -260,7 +258,7 @@ class AuthSyncRuntime {
 
   /// Flush pending local changes to Google before the process exits (desktop
   /// close hook). Delegates to the scheduler, which only acts when it can safely
-  /// push (signed in, push enabled, session alive, something pending).
+  /// push (signed in, session alive, something pending).
   Future<void> flushOnExit() => scheduler.flushOnExit();
 
   /// Release the auth + scheduler streams. Call at shutdown.

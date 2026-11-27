@@ -32,14 +32,12 @@ import 'sync_fixture.dart';
 const _t0 = '2026-01-01T00:00:00Z';
 
 /// A fresh engine over an in-memory store and fake API, torn down with the test.
-Future<(FakeTasksApi, SyncEngine)> engine({bool push = false}) async {
+Future<(FakeTasksApi, SyncEngine)> engine() async {
   final client = FakeTasksApi();
   final db = await AppDatabase.openMemory();
   addTearDown(db.close);
   final store = Store(db);
-  final eng = push
-      ? SyncEngine.withPush(client, store, true)
-      : SyncEngine(client, store);
+  final eng = SyncEngine(client, store);
   return (client, eng);
 }
 
@@ -143,7 +141,7 @@ void main() {
   // ─── List sync ─────────────────────────────────────────────────────────────
 
   test('push_list_create_learns_the_remote_id_and_keeps_its_own', () async {
-    final (_, eng) = await engine(push: true);
+    final (_, eng) = await engine();
     // Local list create + a task in it.
     await eng.store.upsertList(dirtyList('local-list', 'Work', 'create'));
     await eng.store.upsertTask(
@@ -168,7 +166,7 @@ void main() {
   test(
     'a rename during list creation learns the id and patches, not reinserts',
     () async {
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       final commands = Commands(eng.store, newId: () => 'local-L');
       final created = await withClock(
         Clock.fixed(DateTime.utc(2026, 1, 2)),
@@ -210,7 +208,7 @@ void main() {
   );
 
   test('push_list_rename', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Old Name');
     await eng.run();
 
@@ -231,7 +229,7 @@ void main() {
     // not a later rename made while that request was in flight.  If the old
     // acknowledgement clears the whole row, the next pull overwrites the
     // later title and the user loses it.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     final commands = Commands(eng.store);
     await seedSyncedList(client, eng.store, 'L1', 'Original');
     await eng.run();
@@ -270,7 +268,7 @@ void main() {
   });
 
   test('push_list_delete', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Doomed');
     await eng.run();
 
@@ -291,7 +289,7 @@ void main() {
     // rename is meaningless against a gone list, so the local row is
     // hard-deleted to converge with the server — not left dirty to 404 forever.
     // No error is surfaced.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Old Name');
     await eng.run();
 
@@ -317,7 +315,7 @@ void main() {
     // too (P4) — but an unpushed create in it is work the server has NEVER SEEN,
     // and a remote event must not destroy that. It re-homes to the default list,
     // exactly as the pull's ghost path does (D2).
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Work');
     await seedSyncedList(client, eng.store, 'L2', 'My Tasks');
     await eng.run();
@@ -348,7 +346,7 @@ void main() {
       // The same 404 with no surviving list to take the rows: dropping the list
       // would destroy them, so it is kept as an unpushed list create and
       // re-created on the server instead (P2 holds even with one list left).
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Work');
       await eng.run();
 
@@ -383,7 +381,7 @@ void main() {
   test('push_list_rename_transient_stays_dirty_then_converges', () async {
     // A transient (503) on a list rename must leave the row dirty and the server
     // untouched — no error surfaced — then succeed on the next run.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Old Name');
     await eng.run();
 
@@ -422,7 +420,7 @@ void main() {
   test('push_list_delete_transient_leaves_tombstone', () async {
     // A transient on a list delete must NOT hard-delete locally (that would
     // strand the list on the server) — it stays a tombstone and retries.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Doomed');
     await eng.run();
 
@@ -452,7 +450,7 @@ void main() {
     // A 401 on a list delete aborts the run (every call would fail the same way)
     // instead of being swallowed. The tombstone survives so the delete pushes
     // after re-auth, and the server list is untouched.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Doomed');
     await eng.run();
 
@@ -487,7 +485,7 @@ void main() {
   test('pull_adopts_local_create_by_title', () async {
     // Offline default "My Tasks" (local create) must adopt Google's existing
     // "My Tasks" on pull instead of duplicating.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await eng.store.upsertList(dirtyList('local-uuid', 'My Tasks', 'create'));
     // Deliberately untracked locally: adoption by title is what is under test.
     client.seedList('remote-mytasks', 'My Tasks');
@@ -515,7 +513,9 @@ void main() {
       renamedList(await listById(eng.store, 'L1'), 'Local Rename'),
     );
 
-    await eng.run(); // pull must not clobber the local rename (push disabled)
+    // The rename does not land, so the row is still dirty when the pull runs.
+    client.failNext(Method.patchTasklist, () => const ServerError(503));
+    await eng.run(); // pull must not clobber the local rename
     final l = await listById(eng.store, 'L1');
     expect(l.list.title, 'Local Rename');
     expect(l.syncState, SyncState.dirty);
@@ -589,7 +589,7 @@ void main() {
   test('push_skips_local_only_list_and_its_tasks', () async {
     // With push enabled, neither a local-only list nor its tasks may be sent to
     // the server.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await eng.store.upsertList(
       StoredTaskList(
         list: TaskList(id: 'local-1', title: 'Scratch', updated: _t0),
@@ -623,7 +623,7 @@ void main() {
       // lands over theirs (last writer wins) — and, crucially, the outcome is ONE
       // list, not a forked copy: the sidebar never grows a second entry out of a
       // rename race, and the run converges (P7).
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Work');
       client.seedTask('L1', 'T1', 'ship it', '1');
       await eng.run();
@@ -665,7 +665,7 @@ void main() {
     // one. D6: remote wins, silently. The local title is replaced with no copy,
     // no error and no "your rename was overwritten" state to clean up, and the
     // row stays clean so nothing re-pushes the old title.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Work');
     await eng.run();
 
@@ -696,7 +696,7 @@ void main() {
     // in our delete window dies with it. Accepted: the user asked for the list
     // to go. What must NOT happen is a local orphan — a row in a list that no
     // longer exists, invisible in every view and undeletable.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
     await seedSyncedList(client, eng.store, 'L2', 'Doomed');
     client.seedTask('L2', 'T1', 'old row', '1');
@@ -739,7 +739,7 @@ void main() {
       // tombstone that can NEVER push would error on every run forever, so the
       // list comes back — visible, clean, its tasks intact — and the user is told
       // once via the error count rather than nagged every cadence tick.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       await seedSyncedList(client, eng.store, 'L2', 'Undeletable');
       client.seedTask('L2', 'T1', 'still here', '1');
@@ -776,7 +776,7 @@ void main() {
     // AND the task added to it remotely. Neither may come back: `all_lists`
     // (what the sidebar and every smart view iterate over) must not show the
     // list, so nothing it holds is reachable.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
     await seedSyncedList(client, eng.store, 'L2', 'Doomed');
     await eng.run();
@@ -820,7 +820,7 @@ void main() {
     // §I × already deleted remotely. The 404 is the outcome we wanted, so it
     // clears the tombstone instead of counting an error or nagging on every
     // future run.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
     await seedSyncedList(client, eng.store, 'L2', 'Doomed');
     await eng.run();
@@ -846,7 +846,7 @@ void main() {
     // list instead of inserting a duplicate — and the tasks queued in the local
     // list follow it onto the adopted id, which is the part a plain id remap
     // could silently drop.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     // Deliberately untracked locally: adoption by title is what is under test.
     client.seedList('L-remote', 'Groceries');
     await eng.store.upsertList(dirtyList('local-list', 'Groceries', 'create'));

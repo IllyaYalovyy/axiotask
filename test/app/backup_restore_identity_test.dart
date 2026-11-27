@@ -40,10 +40,7 @@ Future<(FakeTasksApi, SyncEngine)> engineWith(
     s = Store(db);
   }
   var n = 0;
-  return (
-    client,
-    SyncEngine.withPush(client, s, true, newId: () => '$idPrefix-${++n}'),
-  );
+  return (client, SyncEngine(client, s, newId: () => '$idPrefix-${++n}'));
 }
 
 void main() {

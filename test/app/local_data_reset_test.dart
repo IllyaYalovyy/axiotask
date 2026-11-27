@@ -189,7 +189,7 @@ void main() {
 
       // A full read-write sync against an EMPTY server: the erased account's
       // dirty task must not be recreated there.
-      final outcome = await SyncEngine.withPush(client, store, true).run();
+      final outcome = await SyncEngine(client, store).run();
 
       expect(outcome.pushed, 0);
       expect(client.callCount(Method.insertTask), 0);

@@ -403,7 +403,7 @@ void main() {
       final db = await AppDatabase.openMemory();
       addTearDown(db.close);
       final store = Store(db);
-      final engine = SyncEngine.withPush(client, store, true);
+      final engine = SyncEngine(client, store);
 
       tester.view.physicalSize = const Size(1000, 1400);
       tester.view.devicePixelRatio = 1.0;

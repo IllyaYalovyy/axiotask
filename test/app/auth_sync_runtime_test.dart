@@ -51,7 +51,6 @@ void main() {
   Future<_Env> makeEnv({
     required TokenProvider tokenProvider,
     bool autoSyncOnStart = true,
-    bool push = false,
     TasksApi? Function(String accessToken)? buildClient,
   }) async {
     final db = await AppDatabase.openMemory();
@@ -59,9 +58,7 @@ void main() {
     final store = Store(db);
     final config = ConfigController(
       path: File(p.join(tmp.path, 'config.json')),
-      initial: AppConfig(
-        sync: SyncConfig(pushEnabled: push, autoSyncOnStart: autoSyncOnStart),
-      ),
+      initial: AppConfig(sync: SyncConfig(autoSyncOnStart: autoSyncOnStart)),
     );
     final client = FakeTasksApi();
     final runtime = AuthSyncRuntime(
@@ -283,7 +280,6 @@ void main() {
     () async {
       final env = await makeEnv(
         tokenProvider: FakeTokenProvider.needsInteraction(),
-        push: true,
       );
       await env.runtime.restoreAndAutoSync();
       await seedLocalList(env.store);

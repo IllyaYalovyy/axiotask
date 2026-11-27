@@ -2,8 +2,8 @@
 // tab (which dies with the keyboard layer). Four tabs: Sync, Appearance,
 // Account, About. Fresh Material 3 visuals (Q3), not a pixel port.
 //
-// What is REAL today: the theme radio (re-themes live), the read-write/auto-sync
-// config toggles (persist-first), and backup Export/Restore (writes/reads a
+// What is REAL today: the theme radio (re-themes live), the auto-sync
+// config toggle (persist-first), and backup Export/Restore (writes/reads a
 // lossless JSON snapshot). What waits on the auth/scheduler-integration task is
 // seam-backed with safe defaults: the sync stats read "never synced", the sync
 // actions (Sync now / Fresh sync) are DISABLED until authenticated — exactly the
@@ -42,9 +42,7 @@ class PropertiesDialog extends ConsumerStatefulWidget {
 }
 
 class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
-  late bool _pushEnabled;
   late bool _autoSync;
-  bool _confirmingPush = false;
   bool _busy = false;
 
   // The most recent backup result / error, shown INLINE in the Sync tab. A
@@ -61,9 +59,7 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   @override
   void initState() {
     super.initState();
-    final config = ref.read(configControllerProvider);
-    _pushEnabled = config.pushEnabled;
-    _autoSync = config.autoSyncOnStart;
+    _autoSync = ref.read(configControllerProvider).autoSyncOnStart;
   }
 
   @override
@@ -175,28 +171,6 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
       children: [
         _sectionHeading(theme, 'Sync mode'),
         SwitchListTile(
-          key: const Key('sync-push-toggle'),
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Read-write sync'),
-          subtitle: Text(
-            _pushEnabled
-                ? 'Local edits are pushed to Google Tasks.'
-                : 'Read-only: changes stay on this device and are never pushed.',
-          ),
-          value: _pushEnabled,
-          onChanged: _busy
-              ? null
-              : (v) {
-                  // Turning ON is confirmed inline; turning OFF is immediate.
-                  if (v && !_pushEnabled) {
-                    setState(() => _confirmingPush = true);
-                  } else {
-                    _setPush(false);
-                  }
-                },
-        ),
-        if (_confirmingPush) _pushConfirm(context, colors),
-        SwitchListTile(
           key: const Key('sync-autosync-toggle'),
           contentPadding: EdgeInsets.zero,
           title: const Text('Auto-sync on startup'),
@@ -208,9 +182,13 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
         // The Status block summarises where sync stands; the per-run history
         // lives one tap away on its own screen (#218) rather than on the front
         // page or crowded in here.
-        Row(
+        // Heading left, button right; the button drops to its own line when a
+        // narrow phone at a large text size cannot hold both (#247).
+        OverflowBar(
+          alignment: MainAxisAlignment.spaceBetween,
+          overflowAlignment: OverflowBarAlignment.end,
           children: [
-            Expanded(child: _sectionHeading(theme, 'Status')),
+            _sectionHeading(theme, 'Status'),
             TextButton.icon(
               key: const Key('sync-activity-button'),
               onPressed: () => showSyncActivity(context),
@@ -286,41 +264,6 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
       ],
     );
   }
-
-  Widget _pushConfirm(BuildContext context, ColorScheme colors) => Card(
-    key: const Key('enable-push-confirm'),
-    color: colors.surfaceContainerHighest,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Push your local changes to Google Tasks? Edits on this device '
-            'will start syncing to your account.',
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              FilledButton(
-                key: const Key('confirm-enable-push'),
-                onPressed: () {
-                  setState(() => _confirmingPush = false);
-                  _setPush(true);
-                },
-                child: const Text('Enable push'),
-              ),
-              TextButton(
-                onPressed: () => setState(() => _confirmingPush = false),
-                child: const Text('Cancel'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    ),
-  );
 
   Widget _statusBlock(ThemeData theme, AppSettingsView settings) {
     final s = settings.sync;
@@ -544,11 +487,6 @@ class _PropertiesDialogState extends ConsumerState<PropertiesDialog> {
   );
 
   // ── Actions ─────────────────────────────────────────────────────────────
-  Future<void> _setPush(bool v) async {
-    await ref.read(configControllerProvider).setPushEnabled(v);
-    if (mounted) setState(() => _pushEnabled = v);
-  }
-
   Future<void> _setAutoSync(bool v) async {
     await ref.read(configControllerProvider).setAutoSyncOnStart(v);
     if (mounted) setState(() => _autoSync = v);

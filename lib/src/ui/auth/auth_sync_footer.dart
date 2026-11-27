@@ -26,7 +26,6 @@ class AuthSyncFooter extends StatelessWidget {
     required this.onSignOut,
     required this.onSync,
     required this.onOpenProperties,
-    this.pushEnabled = true,
     this.confirmedRuns = 0,
     super.key,
   });
@@ -46,10 +45,6 @@ class AuthSyncFooter extends StatelessWidget {
   /// Open Properties — the "needs attention" button's destination, where the
   /// sanitized cause and Sync actions live (#136).
   final VoidCallback onOpenProperties;
-
-  /// Whether local edits are uploaded to Google. The download-only default is
-  /// stated in the signed-in footer, with a direct route to Sync settings.
-  final bool pushEnabled;
 
   /// How many sync runs have CHANGED something so far (#255). Every increase
   /// draws a check over the status dot; the value itself means nothing, only
@@ -94,10 +89,8 @@ class AuthSyncFooter extends StatelessWidget {
           const SizedBox(height: 10),
           _StatusRow(
             status: status,
-            pushEnabled: pushEnabled,
             confirmedRuns: confirmedRuns,
             onSignOut: onSignOut,
-            onOpenProperties: onOpenProperties,
             colors: colors,
             textTheme: theme.textTheme,
           ),
@@ -169,19 +162,15 @@ class _AttentionButton extends StatelessWidget {
 class _StatusRow extends StatelessWidget {
   const _StatusRow({
     required this.status,
-    required this.pushEnabled,
     required this.confirmedRuns,
     required this.onSignOut,
-    required this.onOpenProperties,
     required this.colors,
     required this.textTheme,
   });
 
   final AuthSyncStatus status;
-  final bool pushEnabled;
   final int confirmedRuns;
   final VoidCallback onSignOut;
-  final VoidCallback onOpenProperties;
   final ColorScheme colors;
   final TextTheme textTheme;
 
@@ -194,64 +183,45 @@ class _StatusRow extends StatelessWidget {
     );
     final absolute = _absoluteLastSync();
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Row(
       children: [
-        Row(
-          children: [
-            // The dot is also where a confirmed sync says so: the check is drawn
-            // OVER it (#255), from a wrapper the dot alone sizes — the row's
-            // geometry is the same mark or no mark.
-            SyncCheckMark(
-              runs: confirmedRuns,
-              child: Container(
-                key: const Key('auth-footer-dot'),
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: _dotColor(),
-                  shape: BoxShape.circle,
-                ),
-              ),
+        // The dot is also where a confirmed sync says so: the check is drawn
+        // OVER it (#255), from a wrapper the dot alone sizes — the row's
+        // geometry is the same mark or no mark.
+        SyncCheckMark(
+          runs: confirmedRuns,
+          child: Container(
+            key: const Key('auth-footer-dot'),
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: _dotColor(),
+              shape: BoxShape.circle,
             ),
-            const SizedBox(width: 8),
-            // The Tooltip wraps only the phrase and adds no geometry of its own, so
-            // the footer's layout (and its goldens) are untouched by #222.
-            Expanded(
-              child: absolute == null
-                  ? phrase
-                  : Tooltip(message: absolute, child: phrase),
-            ),
-            if (status.isAuthenticated) ...[
-              const SizedBox(width: 8),
-              TextButton(
-                key: const Key('auth-footer-signout'),
-                onPressed: onSignOut,
-                // Compact PADDING keeps the label tight, but the tap target stays
-                // the 48dp Material minimum (padded tapTargetSize) — this footer
-                // also renders in the mobile drawer, where a coarse pointer needs
-                // the full hit area even for a small-looking affordance.
-                style: TextButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  tapTargetSize: MaterialTapTargetSize.padded,
-                ),
-                child: const Text('Sign out'),
-              ),
-            ],
-          ],
+          ),
         ),
-        if (!pushEnabled && status.isAuthenticated) ...[
-          const SizedBox(height: 4),
-          TextButton.icon(
-            key: const Key('auth-footer-read-only-settings'),
-            onPressed: onOpenProperties,
-            icon: const Icon(Icons.settings_outlined, size: 16),
-            label: const Text('Read-only · edits stay on this device'),
+        const SizedBox(width: 8),
+        // The Tooltip wraps only the phrase and adds no geometry of its own, so
+        // the footer's layout (and its goldens) are untouched by #222.
+        Expanded(
+          child: absolute == null
+              ? phrase
+              : Tooltip(message: absolute, child: phrase),
+        ),
+        if (status.isAuthenticated) ...[
+          const SizedBox(width: 8),
+          TextButton(
+            key: const Key('auth-footer-signout'),
+            onPressed: onSignOut,
+            // Compact PADDING keeps the label tight, but the tap target stays
+            // the 48dp Material minimum (padded tapTargetSize) — this footer
+            // also renders in the mobile drawer, where a coarse pointer needs
+            // the full hit area even for a small-looking affordance.
             style: TextButton.styleFrom(
-              alignment: Alignment.centerLeft,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               tapTargetSize: MaterialTapTargetSize.padded,
             ),
+            child: const Text('Sign out'),
           ),
         ],
       ],
@@ -298,8 +268,7 @@ class _StatusRow extends StatelessWidget {
       case FooterStatus.error:
         return 'Sync error';
       case FooterStatus.synced:
-        return '${pushEnabled ? 'Synced' : 'Last downloaded'} '
-            '${formatSynced(status.lastSynced!)}';
+        return 'Synced ${formatSynced(status.lastSynced!)}';
       case FooterStatus.ready:
         return 'Ready';
       case FooterStatus.offline:

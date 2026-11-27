@@ -38,7 +38,6 @@ AppSettingsView settingsView({
 }) => AppSettingsView(
   version: '0.1.0',
   instance: instance.isEmpty ? null : instance,
-  pushEnabled: false,
   autoSyncOnStart: true,
   authenticated: authenticated,
   needsReauth: needsReauth,
@@ -514,19 +513,6 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(ran, 1, reason: 'Sync now drives the refresh (sync-when-authed)');
-    });
-  });
-
-  group('sync mode toggle', () {
-    testWidgets('turning on read-write sync asks for inline confirmation', (
-      tester,
-    ) async {
-      await pumpProps(tester);
-      expect(find.byKey(const Key('enable-push-confirm')), findsNothing);
-      await tester.tap(find.byKey(const Key('sync-push-toggle')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('enable-push-confirm')), findsOneWidget);
-      expect(find.byKey(const Key('confirm-enable-push')), findsOneWidget);
     });
   });
 

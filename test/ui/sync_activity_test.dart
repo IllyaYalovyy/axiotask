@@ -64,7 +64,6 @@ AppSettingsView settingsView({
 }) => AppSettingsView(
   version: '0.1.0',
   instance: null,
-  pushEnabled: true,
   autoSyncOnStart: true,
   authenticated: true,
   needsReauth: false,

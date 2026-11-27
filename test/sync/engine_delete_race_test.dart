@@ -118,7 +118,7 @@ class Rig {
     final store = Store(db);
     var n = 0;
     String newId() => 'gen-${++n}';
-    final engine = SyncEngine.withPush(client, store, true, newId: newId);
+    final engine = SyncEngine(client, store, newId: newId);
     await engine.run(); // adopt the server's list into a local row
     final list = (await store.allLists()).single;
     return Rig._(

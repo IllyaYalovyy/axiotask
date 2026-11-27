@@ -128,14 +128,6 @@ class SyncOutcome {
   bool listsChanged = false;
 }
 
-/// Configuration for a sync engine instance.
-class SyncConfig {
-  const SyncConfig({this.pushEnabled = false});
-
-  /// Whether to push local changes to the server.
-  final bool pushEnabled;
-}
-
 /// Identity of a row whose push failed: what a rejection is counted against
 /// ([id] plus [localUpdated], the streak's base — an edit moves it and voids
 /// the streak) and what to name in the status if the row is quarantined
@@ -146,36 +138,21 @@ typedef PushRowRef = ({String id, String title, String localUpdated});
 /// the caller's [PoisonRegistry], which is what makes "rejected five runs
 /// running" observable at all.
 class SyncEngine {
-  /// Create a new sync engine with the default config (push off).
+  /// Create a sync engine. [poison] carries the rejection streaks ACROSS runs;
+  /// omitting it gives this engine a private, empty registry (a row can never be
+  /// rejected twice within one run, so nothing quarantines).
   SyncEngine(
     this._client,
     this._store, {
     String Function()? newId,
     PoisonRegistry? poison,
     ConflictRegistry? conflicts,
-  }) : _config = const SyncConfig(),
-       _newId = newId ?? newLocalId,
-       _poison = poison ?? PoisonRegistry(),
-       _conflicts = conflicts ?? ConflictRegistry();
-
-  /// Create with an explicit push flag. [poison] carries the rejection streaks
-  /// ACROSS runs; omitting it gives this engine a private, empty registry (a
-  /// row can never be rejected twice within one run, so nothing quarantines).
-  SyncEngine.withPush(
-    this._client,
-    this._store,
-    bool pushEnabled, {
-    String Function()? newId,
-    PoisonRegistry? poison,
-    ConflictRegistry? conflicts,
-  }) : _config = SyncConfig(pushEnabled: pushEnabled),
-       _newId = newId ?? newLocalId,
+  }) : _newId = newId ?? newLocalId,
        _poison = poison ?? PoisonRegistry(),
        _conflicts = conflicts ?? ConflictRegistry();
 
   final TasksApi _client;
   final Store _store;
-  final SyncConfig _config;
 
   /// Consecutive push rejections per row (#270) — owned by the caller so it
   /// survives between runs.
@@ -243,16 +220,13 @@ class SyncEngine {
       e is StoreError ? e : StoreSqlError(e.toString());
 
   Future<void> _execute(SyncOutcome out) async {
-    if (_config.pushEnabled) {
-      await _pushAll(out);
-    }
+    await _pushAll(out);
     await _pullAll(out);
     // D7 flatten (invariant #1) runs over the LOCAL store after EVERY sync, not
     // just inside pull_list: a push-side 412 resolution can adopt a server
     // demote onto our canonical row and leave our subtask a third level, and
     // the same run's pull can be skipped whole by a transient list_tasklists
-    // fault (#150). Only the corrective server move inside repairThirdLevel is
-    // gated on push (#137).
+    // fault (#150).
     for (final list in await _store.allLists()) {
       final rows = await _store.listTasks(list.list.id);
       final thirdLevel = reconcile.thirdLevelIds(rows);
@@ -1273,7 +1247,7 @@ class SyncEngine {
 
   /// Flatten any server-side third level in this list (RFC-009 §F/§G, D7). Each
   /// grandchild is promoted to top-level; a synced row also gets the corrective
-  /// server move (gated on push, #137). Every repair counts as a conflict.
+  /// server move. Every repair counts as a conflict.
   Future<void> _repairThirdLevel(
     StoredTaskList list,
     List<String> thirdLevel,
@@ -1282,13 +1256,7 @@ class SyncEngine {
     for (final id in thirdLevel) {
       final before = await _store.findTaskAny(id);
       if (before == null) continue; // vanished between detection and repair
-      if (before.remoteId != null && !_config.pushEnabled) {
-        // Read-only sync: flatten LOCALLY now (invariant #1 is absolute) and
-        // DROP the clean etag so the next pull re-examines it; the server keeps
-        // the nesting until a push-enabled run sends the corrective move.
-        await _promoteAndDetach(id);
-        out.conflicts += 1;
-      } else if (before.remoteId != null && list.remoteId != null) {
+      if (before.remoteId != null && list.remoteId != null) {
         // A synced grandchild really sits on the server under a subtask. Push
         // the corrective move so the server converges too.
         Task? remote;

@@ -30,7 +30,7 @@ Future<(FakeTasksApi, SyncEngine)> engine() async {
   final client = FakeTasksApi();
   final db = await AppDatabase.openMemory();
   addTearDown(db.close);
-  return (client, SyncEngine.withPush(client, Store(db), true));
+  return (client, SyncEngine(client, Store(db)));
 }
 
 StoredTask dirtyTask(

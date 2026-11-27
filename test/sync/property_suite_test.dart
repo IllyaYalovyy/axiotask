@@ -256,7 +256,7 @@ class Harness {
 
   void _buildEngine() {
     commands = Commands(store, newId: _newId);
-    engine = SyncEngine.withPush(client, store, true, newId: _newId);
+    engine = SyncEngine(client, store, newId: _newId);
   }
 
   Future<void> dispose() => _db.close();

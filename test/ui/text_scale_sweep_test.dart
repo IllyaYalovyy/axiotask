@@ -584,7 +584,6 @@ void main() {
                 const AppSettingsView(
                   version: '0.1.0',
                   instance: null,
-                  pushEnabled: false,
                   autoSyncOnStart: true,
                   authenticated: false,
                   needsReauth: false,

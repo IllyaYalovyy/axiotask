@@ -19,9 +19,8 @@ void main() {
   /// is assertable.
   Future<({List<String> fired})> pumpFooter(
     WidgetTester tester,
-    AuthSyncStatus status, {
-    bool pushEnabled = true,
-  }) async {
+    AuthSyncStatus status,
+  ) async {
     final fired = <String>[];
     await tester.pumpWidget(
       MaterialApp(
@@ -35,7 +34,6 @@ void main() {
               onSignOut: () => fired.add('signOut'),
               onSync: () => fired.add('sync'),
               onOpenProperties: () => fired.add('properties'),
-              pushEnabled: pushEnabled,
             ),
           ),
         ),
@@ -125,26 +123,6 @@ void main() {
       await tester.tap(find.byKey(const Key('auth-footer-signout')));
       expect(h.fired, ['sync', 'signOut']);
     });
-  });
-
-  testWidgets('read-only downloads name their limit and open Sync settings', (
-    tester,
-  ) async {
-    final h = await pumpFooter(
-      tester,
-      const AuthSyncStatus(
-        isAuthenticated: true,
-        needsReauth: false,
-        lastSynced: '2026-01-01T12:00:00.000Z',
-      ),
-      pushEnabled: false,
-    );
-
-    expect(find.text('Read-only · edits stay on this device'), findsOneWidget);
-    expect(find.textContaining('Last downloaded'), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('auth-footer-read-only-settings')));
-    expect(h.fired, ['properties']);
   });
 
   testWidgets('a run in flight disables the primary button (non-happy)', (

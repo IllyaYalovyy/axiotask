@@ -104,7 +104,6 @@ void main() {
         store: store,
         client: () => client,
         auth: _FakeAuth(),
-        pushEnabled: () => false,
         debounce: Duration.zero,
         period: const Duration(milliseconds: 1),
       );
@@ -183,9 +182,7 @@ void main() {
         store: store,
         config: ConfigController(
           path: File(p.join(tmp.path, 'config.json')),
-          initial: const AppConfig(
-            sync: SyncConfig(pushEnabled: false, autoSyncOnStart: true),
-          ),
+          initial: const AppConfig(sync: SyncConfig(autoSyncOnStart: true)),
         ),
         tokenProvider: FakeTokenProvider.withToken('access-1'),
         buildClient: (_) => client,
@@ -241,7 +238,6 @@ void main() {
         store: store,
         client: () => client,
         auth: _FakeAuth(),
-        pushEnabled: () => true,
         debounce: Duration.zero,
         period: const Duration(milliseconds: 1),
       );

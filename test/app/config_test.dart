@@ -25,9 +25,8 @@ void main() {
       expect(g.scopes, [tasksScope]);
     });
 
-    test('sync defaults: push OFF, auto-sync ON', () {
+    test('sync defaults: auto-sync ON', () {
       const s = SyncConfig();
-      expect(s.pushEnabled, isFalse);
       expect(s.autoSyncOnStart, isTrue);
     });
 
@@ -36,7 +35,6 @@ void main() {
         (jsonDecode(AppConfig.defaultJson()) as Map).cast<String, Object?>(),
       );
       expect(parsed.google.clientId, isEmpty);
-      expect(parsed.sync.pushEnabled, isFalse);
       expect(parsed.sync.autoSyncOnStart, isTrue);
     });
   });
@@ -54,13 +52,12 @@ void main() {
             'client_secret': 'my-secret',
             'scopes': [tasksScope],
           },
-          'sync': {'push_enabled': false, 'auto_sync_on_start': false},
+          'sync': {'auto_sync_on_start': false},
         }),
       );
       final c = AppConfig.loadFrom(cfg())!;
       expect(c.google.clientId, 'my-id');
       expect(c.google.clientSecret, 'my-secret');
-      expect(c.sync.pushEnabled, isFalse);
       expect(c.sync.autoSyncOnStart, isFalse);
     });
 
@@ -82,6 +79,35 @@ void main() {
     });
   });
 
+  group('a config.json written by an earlier release', () {
+    for (final retired in [true, false]) {
+      test('with push_enabled: $retired loads, and loses the key once the app '
+          'writes the file', () async {
+        cfg().writeAsStringSync(
+          jsonEncode({
+            'google': {'client_id': 'keep-me'},
+            'sync': {'push_enabled': retired, 'auto_sync_on_start': false},
+          }),
+        );
+
+        final loaded = AppConfig.loadFrom(cfg())!;
+        expect(loaded.google.clientId, 'keep-me');
+        expect(loaded.sync.autoSyncOnStart, isFalse);
+
+        await ConfigController.load(cfg()).setAutoSyncOnStart(true);
+
+        final written = (jsonDecode(cfg().readAsStringSync()) as Map);
+        expect(written['sync'], {'auto_sync_on_start': true});
+        expect((written['google'] as Map)['client_id'], 'keep-me');
+      });
+    }
+
+    test('the default file the app writes has no push_enabled', () {
+      AppConfig.writeDefaultIfMissingAt(cfg());
+      expect(cfg().readAsStringSync(), isNot(contains('push_enabled')));
+    });
+  });
+
   group('writeDefaultIfMissingAt', () {
     test('creates the file (and parent) when missing', () {
       final nested = File(p.join(tmp.path, 'axiotask', 'config.json'));
@@ -89,7 +115,7 @@ void main() {
       AppConfig.writeDefaultIfMissingAt(nested);
       expect(nested.existsSync(), isTrue);
       final loaded = AppConfig.loadFrom(nested)!;
-      expect(loaded.sync.pushEnabled, isFalse);
+      expect(loaded.sync.autoSyncOnStart, isTrue);
     });
 
     test('does not overwrite an existing file', () {
@@ -102,12 +128,8 @@ void main() {
 
   group('saveSyncTo (persist-first, #171)', () {
     test('round-trips toggled values', () {
-      AppConfig.saveSyncTo(
-        cfg(),
-        const SyncConfig(pushEnabled: true, autoSyncOnStart: false),
-      );
+      AppConfig.saveSyncTo(cfg(), const SyncConfig(autoSyncOnStart: false));
       final c = AppConfig.loadFrom(cfg())!;
-      expect(c.sync.pushEnabled, isTrue);
       expect(c.sync.autoSyncOnStart, isFalse);
     });
 
@@ -115,48 +137,25 @@ void main() {
       cfg().writeAsStringSync(
         jsonEncode({
           'google': {'client_id': 'keep-me', 'client_secret': 'secret-too'},
-          'sync': {'push_enabled': false},
+          'sync': {'auto_sync_on_start': true},
         }),
       );
-      AppConfig.saveSyncTo(cfg(), const SyncConfig(pushEnabled: true));
+      AppConfig.saveSyncTo(cfg(), const SyncConfig(autoSyncOnStart: false));
       final c = AppConfig.loadFrom(cfg())!;
       expect(c.google.clientId, 'keep-me');
       expect(c.google.clientSecret, 'secret-too');
-      expect(c.sync.pushEnabled, isTrue);
+      expect(c.sync.autoSyncOnStart, isFalse);
     });
 
     test('creates the file from defaults when missing', () {
       final nested = File(p.join(tmp.path, 'nested', 'config.json'));
-      AppConfig.saveSyncTo(nested, const SyncConfig(pushEnabled: true));
+      AppConfig.saveSyncTo(nested, const SyncConfig(autoSyncOnStart: false));
       expect(nested.existsSync(), isTrue);
-      expect(AppConfig.loadFrom(nested)!.sync.pushEnabled, isTrue);
+      expect(AppConfig.loadFrom(nested)!.sync.autoSyncOnStart, isFalse);
     });
   });
 
   group('ConfigController persist-first (#171)', () {
-    test('setPushEnabled persists then flips the in-memory value', () async {
-      final c = ConfigController(path: cfg(), initial: const AppConfig());
-      expect(c.pushEnabled, isFalse);
-      await c.setPushEnabled(true);
-      expect(c.pushEnabled, isTrue);
-      // The durable write happened, not just the memory flip.
-      expect(AppConfig.loadFrom(cfg())!.sync.pushEnabled, isTrue);
-    });
-
-    test('setPushEnabled does NOT flip when the config write fails', () async {
-      // Point the controller at a path that is a DIRECTORY: writing the file
-      // throws, so the in-memory toggle must stay put (#171).
-      final blocked = File(p.join(tmp.path, 'blocked'));
-      Directory(blocked.path).createSync();
-      final c = ConfigController(path: blocked, initial: const AppConfig());
-
-      await expectLater(
-        c.setPushEnabled(true),
-        throwsA(isA<FileSystemException>()),
-      );
-      expect(c.pushEnabled, isFalse, reason: 'write failed → no flip');
-    });
-
     test(
       'setAutoSyncOnStart does NOT flip when the config write fails',
       () async {

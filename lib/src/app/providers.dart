@@ -75,7 +75,7 @@ final listsProvider = StreamProvider<List<StoredTaskList>>(
   (ref) => ref.watch(storeProvider).watchLists(),
 );
 
-/// The config controller (sync toggles, persist-first). Overridden by bootstrap.
+/// The config controller (sync settings, persist-first). Overridden by bootstrap.
 final configControllerProvider = Provider<ConfigController>(
   (ref) => _mustOverride('configControllerProvider'),
 );
@@ -461,8 +461,8 @@ final authenticatedProvider = Provider<bool>(
   (ref) => ref.watch(authSnapshotProvider).value?.isAuthenticated ?? false,
 );
 
-/// Whether this install is meant to reach Google at all: auto-sync on start,
-/// read-write sync, or a session already on disk. It is the difference between
+/// Whether this install is meant to reach Google at all: auto-sync on start, or
+/// a session already on disk. It is the difference between
 /// a missing-credentials config being a LOUD startup fault and a deliberately
 /// local-only app staying quiet (#228). The composition root (F5) overrides it
 /// from the live config; the default is `true` because the shipped config
@@ -504,7 +504,6 @@ final appSettingsProvider = Provider<AppSettingsView>((ref) {
   return AppSettingsView(
     version: ref.watch(appVersionProvider),
     instance: ref.watch(instancePrefixProvider),
-    pushEnabled: config.pushEnabled,
     autoSyncOnStart: config.autoSyncOnStart,
     authenticated: ref.watch(authenticatedProvider),
     needsReauth: ref.watch(needsReauthProvider),

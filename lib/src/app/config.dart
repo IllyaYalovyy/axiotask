@@ -6,9 +6,9 @@
 // TOML-comment-preservation tests do NOT port; every other config test does.
 //
 // `config.json` holds the desktop OAuth client id/secret (GoogleConfig) and the
-// sync toggles (SyncConfig: push_enabled default OFF, auto_sync_on_start default
-// ON). It lives beside the DB but OUTSIDE the schema fingerprint, so a schema
-// wipe never touches it (a wipe destroys the cache only).
+// sync settings (SyncConfig: auto_sync_on_start default ON). It lives beside the
+// DB but OUTSIDE the schema fingerprint, so a schema wipe never touches it (a
+// wipe destroys the cache only).
 //
 // The #171 persist-first contract lives in [saveSyncTo]: the settings are
 // written durably FIRST; the caller (`ConfigController`) flips its in-memory
@@ -51,25 +51,19 @@ class GoogleConfig {
   );
 }
 
-/// Sync settings. Ported from `SyncConfig` — push OFF, auto-sync ON by default.
+/// Sync settings. Ported from `SyncConfig` — auto-sync ON by default. Sync is
+/// always two-way; a key an earlier release wrote here that is no longer a
+/// setting is ignored on load and dropped on the next save.
 class SyncConfig {
-  const SyncConfig({this.pushEnabled = false, this.autoSyncOnStart = true});
-
-  /// Whether to push local changes to Google.
-  final bool pushEnabled;
+  const SyncConfig({this.autoSyncOnStart = true});
 
   /// Auto-sync once on startup.
   final bool autoSyncOnStart;
 
-  Map<String, Object?> toJson() => {
-    'push_enabled': pushEnabled,
-    'auto_sync_on_start': autoSyncOnStart,
-  };
+  Map<String, Object?> toJson() => {'auto_sync_on_start': autoSyncOnStart};
 
-  factory SyncConfig.fromJson(Map<String, Object?> json) => SyncConfig(
-    pushEnabled: json['push_enabled'] as bool? ?? false,
-    autoSyncOnStart: json['auto_sync_on_start'] as bool? ?? true,
-  );
+  factory SyncConfig.fromJson(Map<String, Object?> json) =>
+      SyncConfig(autoSyncOnStart: json['auto_sync_on_start'] as bool? ?? true);
 }
 
 /// Top-level application configuration. Ported from `AppConfig`.

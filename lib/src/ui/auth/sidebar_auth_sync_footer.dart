@@ -48,7 +48,6 @@ class _SidebarAuthSyncFooterState extends ConsumerState<SidebarAuthSyncFooter> {
     final snapshot = ref.watch(authSnapshotProvider).value;
     final sync = ref.watch(syncStatusViewProvider);
     final syncIntended = ref.watch(syncIntendedProvider);
-    final config = ref.watch(configControllerProvider);
     final status = AuthSyncStatus(
       isAuthenticated: snapshot?.isAuthenticated ?? false,
       needsReauth: (snapshot?.needsReauth ?? false) || sync.needsReauth,
@@ -64,17 +63,13 @@ class _SidebarAuthSyncFooterState extends ConsumerState<SidebarAuthSyncFooter> {
           : null,
     );
 
-    return ListenableBuilder(
-      listenable: config,
-      builder: (context, _) => AuthSyncFooter(
-        status: status,
-        pushEnabled: config.pushEnabled,
-        confirmedRuns: _confirmedRuns,
-        onSignIn: ref.read(signInActionProvider),
-        onSignOut: ref.read(signOutActionProvider),
-        onSync: _sync,
-        onOpenProperties: _openProperties,
-      ),
+    return AuthSyncFooter(
+      status: status,
+      confirmedRuns: _confirmedRuns,
+      onSignIn: ref.read(signInActionProvider),
+      onSignOut: ref.read(signOutActionProvider),
+      onSync: _sync,
+      onOpenProperties: _openProperties,
     );
   }
 

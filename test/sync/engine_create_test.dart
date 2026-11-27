@@ -27,14 +27,12 @@ import 'sync_fixture.dart';
 const _t0 = '2026-06-01T00:00:00Z';
 
 /// A fresh engine over an in-memory store and fake API, torn down with the test.
-Future<(FakeTasksApi, SyncEngine)> engine({bool push = false}) async {
+Future<(FakeTasksApi, SyncEngine)> engine() async {
   final client = FakeTasksApi();
   final db = await AppDatabase.openMemory();
   addTearDown(db.close);
   final store = Store(db);
-  final eng = push
-      ? SyncEngine.withPush(client, store, true)
-      : SyncEngine(client, store);
+  final eng = SyncEngine(client, store);
   return (client, eng);
 }
 
@@ -98,19 +96,8 @@ Future<int> serverCount(
 void main() {
   // ─── Push (create pass) ────────────────────────────────────────────────────
 
-  test('push disabled does not push', () async {
-    final (client, eng) = await engine();
-    await seedSyncedList(client, eng.store, 'L1', 'Inbox');
-    await eng.run();
-    await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
-
-    final out = await eng.run();
-    expect(out.pushed, 0);
-    expect(client.callCount(Method.insertTask), 0);
-  });
-
   test('push create learns the server id and keeps its own', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
@@ -129,7 +116,7 @@ void main() {
   });
 
   test('push create parent before child', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -149,7 +136,7 @@ void main() {
   });
 
   test('push create transient leaves dirty (attempted exactly once)', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
@@ -178,7 +165,7 @@ void main() {
       // lands. finishCreate must learn the remote id AND keep the row dirty as
       // an UPDATE (not clean, not a second create), so the newer edit pushes
       // against the remote id instead of inserting a duplicate.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Inbox');
       await eng.run();
 
@@ -250,7 +237,7 @@ void main() {
     // Insert reached the server (orphan exists) but the app crashed before
     // finishCreate — a dirty create + an in-flight marker. Recovery must adopt
     // the orphan, not re-insert.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -278,7 +265,7 @@ void main() {
   test('crash before insert reached server re-inserts', () async {
     // In-flight marker exists but the server never got the task. Recovery clears
     // the marker; normal push inserts.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -297,7 +284,7 @@ void main() {
   });
 
   test('clean create clears in-flight marker', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
     await eng.store.upsertTask(dirtyTask('local-1', 'L1', 'create'));
@@ -308,7 +295,7 @@ void main() {
   test('create commit then response timeout does not duplicate', () async {
     // The server commits the insert but the response times out. The create must
     // NOT be re-attempted in the same run, and the next run adopts the orphan.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -343,7 +330,7 @@ void main() {
     // seen. Pushing the create anyway would insert a second copy; an unresolved
     // marker must hold its create back until a complete remote view lets
     // recovery decide.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -383,7 +370,7 @@ void main() {
     // Orphan adoption compares content; the server orphan carries the canonical
     // due form while the local row has the short form. They must still match, or
     // the create re-inserts a dup.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -425,7 +412,7 @@ void main() {
   test('child create waits for an unresolved parent', () async {
     // The parent's own create failed transiently this run — the child must NOT
     // be pushed with a still-local parent id (permanent 400 on the real API).
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -455,7 +442,7 @@ void main() {
   });
 
   test('three-level creates resolve in one run', () async {
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -482,7 +469,7 @@ void main() {
     // The insert response carries the server-assigned position. Discarding it
     // left the local placeholder in place forever (the adopted etag makes every
     // later pull skip the row).
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -502,7 +489,7 @@ void main() {
     // its siblings — the placement the local placeholder already gave it. A
     // run of creates therefore lands on Google in reverse creation order, which
     // IS the order the parent's checklist shows: newest on top.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'P', 'parent', '1');
     await eng.run();
@@ -538,7 +525,7 @@ void main() {
   test('bare due date is normalized on push, not rejected', () async {
     // The calendar picker used to store a bare "YYYY-MM-DD"; Google 400s that
     // form. The push path must canonicalize so a legacy/imported row heals.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     await eng.run();
 
@@ -556,7 +543,7 @@ void main() {
   test('two same-title local list creates do not collide', () async {
     // Both used to adopt the SAME remote list → primary-key collision on the
     // second remap → the whole run aborted with a store error.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     // Deliberately NOT locally tracked: adoption is the thing under test.
     client.seedList('L-remote', 'Work');
 
@@ -590,7 +577,7 @@ void main() {
       // "Work" before the create reaches the server. The list goes, but the row
       // the server never saw must NOT go with it (P2): it re-homes to the default
       // list, still queued, and lands next run.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       await seedSyncedList(client, eng.store, 'L2', 'Work');
       await eng.run();
@@ -635,7 +622,7 @@ void main() {
       // unpushed subtask of a SYNCED parent. The subtree re-homes intact; the
       // orphan dies WITH its parent in the list cascade rather than being promoted
       // (D3 rejected).
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       await seedSyncedList(client, eng.store, 'L2', 'Work');
       client.seedTask('L2', 'SYNCED', 'server parent', '1');
@@ -707,7 +694,7 @@ void main() {
       // D2's boundary: the ONLY list is deleted remotely while it still holds an
       // unpushed create. There is nowhere to re-home to, so the list is kept as a
       // local list create instead of being dropped — P2 holds even then.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'Work');
       await eng.run();
 
@@ -745,7 +732,7 @@ void main() {
       // We push an edit to a parent the server already deleted (P4), and its FK
       // cascade takes the unpushed subtask with it. D3 rejected: the child dies
       // with the parent — never promoted.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       client.seedTask('L1', 'P', 'parent', '1');
       await eng.run();
@@ -785,7 +772,7 @@ void main() {
   test('synced row in a remotely-deleted list dies with the list', () async {
     // D2's boundary (P1/P4): a row the server HAS seen dies with its list even
     // with a local edit pending. P2 only shields work the server never saw.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
     await seedSyncedList(client, eng.store, 'L2', 'Work');
     client.seedTask('L2', 'T2', 'server row', '1');
@@ -814,7 +801,7 @@ void main() {
       // §G / D3 (rejected). The user adds a subtask; another device deletes its
       // parent before the create lands. The parent's local removal FK-cascades the
       // unpushed child away — no auto-promotion.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       client.seedTask('L1', 'P', 'parent', '1');
       await eng.run();
@@ -853,7 +840,7 @@ void main() {
       // §G × parent completed remotely (probe 5): the insert is ACCEPTED and the
       // child is created already completed — the cascade is Google's, not ours.
       // The row must converge to `completed` locally in the same run (P6).
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       client.seedTask('L1', 'P', 'parent', '1');
       await eng.run();
@@ -903,7 +890,7 @@ void main() {
       // §G. In-flight adoption is scoped to rows behind a marker. A local create
       // that merely LOOKS like a remote task (same title, no marker) must not be
       // swallowed — duplicate titles are legal.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
       await eng.run();
 
@@ -928,7 +915,7 @@ void main() {
     // §G × P2: a queued create whose list is deleted on the server must not be
     // destroyed with the list. It re-homes to the default list, keeping its id,
     // and pushes there — one copy, in the list the user can still see.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
     await seedSyncedList(client, eng.store, 'L2', 'Work');
     await eng.run();
@@ -938,11 +925,10 @@ void main() {
     );
     await client.deleteTasklist('L2');
 
-    // A pull-only run: the list delete lands while the create is still queued,
-    // so the re-home is observable before anything pushes.
-    final pullOnly = SyncEngine.withPush(client, eng.store, false);
-    final out = await pullOnly.run();
-    expect(out.pushed, 0, reason: 'nothing pushes on a pull-only run');
+    // The create is refused (its list is gone) and the pull then re-homes it,
+    // so the re-home is observable before anything lands.
+    final out = await eng.run();
+    expect(out.pushed, 0, reason: 'nothing lands on this run');
     expect(await placement(eng.store, 'local-q'), (
       'L1',
       null,
@@ -963,7 +949,7 @@ void main() {
     // P8 over the new path: the row re-homes, its insert commits on the server,
     // and the response is lost. The in-flight marker must survive the re-home,
     // so the next run adopts the orphan instead of inserting a second copy.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'My Tasks');
     await seedSyncedList(client, eng.store, 'L2', 'Work');
     await eng.run();
@@ -1003,7 +989,7 @@ void main() {
     // propagates out — run() throws, the steps behind it are skipped, the pull
     // never runs. The create ahead of the abort must have committed; the delete
     // that took the error must still be pending; a single healthy run converges.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'Inbox');
     client.seedTask('L1', 'goner', 'delete me', '1');
     await eng.run();

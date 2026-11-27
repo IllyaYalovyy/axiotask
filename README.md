@@ -92,7 +92,6 @@ the app can get it, and a build tries them in this order:
        "scopes": ["https://www.googleapis.com/auth/tasks"]
      },
      "sync": {
-       "push_enabled": false,
        "auto_sync_on_start": true
      }
    }
@@ -136,9 +135,8 @@ instead of failing at Google's login page: the sidebar shows a persistent
 "Setup required" state and the Account tab names the exact `config.json` to
 edit.
 
-`push_enabled` defaults to **false**: the app pulls from Google but never writes
-back until you enable push — useful for testing against a real account without
-touching it.
+Sync is two-way: a signed-in app pulls from Google Tasks and pushes local
+changes back, including any still pending from an earlier release.
 
 On Android there are no client credentials at all: the app is identified by
 package name + signing-certificate SHA-1, which must be registered on the same

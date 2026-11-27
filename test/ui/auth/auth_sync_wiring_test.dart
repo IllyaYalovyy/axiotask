@@ -15,8 +15,6 @@ import 'package:axiotask/src/app/config.dart';
 import 'package:axiotask/src/app/config_controller.dart';
 import 'package:axiotask/src/app/prefs.dart';
 import 'package:axiotask/src/app/providers.dart';
-import 'package:axiotask/src/app/sync_status.dart';
-import 'package:axiotask/src/auth/auth_controller.dart';
 import 'package:axiotask/src/auth/auth_error.dart';
 import 'package:axiotask/src/auth/desktop_auth.dart' show OAuthConfig;
 import 'package:axiotask/src/auth/desktop_token_provider.dart';
@@ -28,11 +26,9 @@ import 'package:axiotask/src/ui/auth/sidebar_auth_sync_footer.dart';
 import 'package:axiotask/src/ui/list_detail_scaffold.dart';
 import 'package:axiotask/src/ui/motion.dart';
 import 'package:axiotask/src/ui/task_list_view.dart';
-import 'package:axiotask/src/ui/theme.dart';
 import 'package:axiotask/src/ui/toast.dart';
 import 'package:axiotask/src/ui/url_opener.dart';
 import 'package:axiotask/src/ui/views.dart';
-import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,7 +47,6 @@ void main() {
   Future<AuthSyncRuntime> makeRuntime({
     required TokenProvider tokenProvider,
     bool autoSyncOnStart = false,
-    bool pushEnabled = false,
     bool hasStoredSession = false,
     FakeTasksApi? client,
   }) async {
@@ -59,12 +54,7 @@ void main() {
     addTearDown(db.close);
     final config = ConfigController(
       path: File(p.join(tmp.path, 'config.json')),
-      initial: AppConfig(
-        sync: SyncConfig(
-          autoSyncOnStart: autoSyncOnStart,
-          pushEnabled: pushEnabled,
-        ),
-      ),
+      initial: AppConfig(sync: SyncConfig(autoSyncOnStart: autoSyncOnStart)),
     );
     final runtime = AuthSyncRuntime(
       store: Store(db),
@@ -98,121 +88,6 @@ void main() {
       ),
     );
     await settle(tester);
-  }
-
-  testWidgets(
-    'the live footer names read-only downloads and follows the setting change',
-    (tester) async {
-      // Default sync is deliberately download-only. The footer must make that
-      // limitation visible after a successful pull, otherwise “Synced” reads
-      // as though a local edit had reached Google. Switching the persisted
-      // setting to read-write must remove that warning without a restart.
-      final config = ConfigController(
-        path: File(p.join(tmp.path, 'config.json')),
-        initial: const AppConfig(),
-      );
-      final synced = SyncStatus()
-        ..lastSynced = '2026-09-13T12:00:00Z'
-        ..lastPulled = 1;
-
-      await withClock(Clock.fixed(DateTime.utc(2026, 9, 13, 12)), () async {
-        await tester.pumpWidget(
-          ProviderScope(
-            overrides: [
-              configControllerProvider.overrideWithValue(config),
-              authSnapshotProvider.overrideWith(
-                (ref) => Stream.value(
-                  const AuthSnapshot(isAuthenticated: true, needsReauth: false),
-                ),
-              ),
-              syncStatusViewProvider.overrideWithValue(
-                SyncStatusView.of(synced),
-              ),
-              syncRunEventsProvider.overrideWith((ref) => const Stream.empty()),
-            ],
-            child: MaterialApp(
-              theme: buildLightTheme(),
-              home: const Scaffold(
-                body: SizedBox(width: 280, child: SidebarAuthSyncFooter()),
-              ),
-            ),
-          ),
-        );
-        await settle(tester);
-
-        expect(
-          find.text('Read-only · edits stay on this device'),
-          findsOneWidget,
-        );
-        expect(find.text('Last downloaded just now'), findsOneWidget);
-        expect(find.textContaining('Synced'), findsNothing);
-
-        await config.setPushEnabled(true);
-        await tester.pump();
-
-        expect(
-          find.text('Read-only · edits stay on this device'),
-          findsNothing,
-        );
-        expect(find.text('Synced just now'), findsOneWidget);
-      });
-    },
-  );
-
-  for (final hasError in [false, true]) {
-    testWidgets(
-      'the live footer keeps read-only mode visible ${hasError ? 'after a sync error' : 'before its first download'}',
-      (tester) async {
-        // Upload mode is a persistent configuration fact, not the outcome of
-        // the last pull. This catches the old synced-only condition that hid
-        // the Settings route in both routine states.
-        final config = ConfigController(
-          path: File(p.join(tmp.path, 'config.json')),
-          initial: const AppConfig(),
-        );
-        final status = SyncStatus();
-        if (hasError) {
-          status.lastSynced = '2026-09-13T12:00:00Z';
-          status.lastError = 'Network unavailable';
-        }
-
-        await tester.pumpWidget(
-          ProviderScope(
-            overrides: [
-              configControllerProvider.overrideWithValue(config),
-              authSnapshotProvider.overrideWith(
-                (ref) => Stream.value(
-                  const AuthSnapshot(isAuthenticated: true, needsReauth: false),
-                ),
-              ),
-              syncStatusViewProvider.overrideWithValue(
-                SyncStatusView.of(status),
-              ),
-              syncRunEventsProvider.overrideWith((ref) => const Stream.empty()),
-            ],
-            child: MaterialApp(
-              theme: buildLightTheme(),
-              home: const Scaffold(
-                body: SizedBox(width: 280, child: SidebarAuthSyncFooter()),
-              ),
-            ),
-          ),
-        );
-        await settle(tester);
-
-        expect(find.text(hasError ? 'Sync error' : 'Ready'), findsOneWidget);
-        expect(find.text('Sync now'), findsOneWidget);
-        expect(
-          find.text('Read-only · edits stay on this device'),
-          findsOneWidget,
-          reason: 'a connected session must expose its upload mode',
-        );
-        expect(
-          find.byKey(const Key('auth-footer-read-only-settings')),
-          findsOneWidget,
-        );
-      },
-    );
   }
 
   testWidgets('signed out, the footer offers Sign in and reads Offline', (
@@ -253,9 +128,8 @@ void main() {
     // Sign out is offered and the status text livened from "Offline".
     expect(find.byKey(const Key('auth-footer-signout')), findsOneWidget);
     expect(find.text('Offline'), findsNothing);
-    // Sign-in kicked off a first download. Default sync is read-only, so the
-    // status must not claim that local changes were uploaded.
-    expect(find.textContaining('Last downloaded'), findsOneWidget);
+    // Sign-in kicked off a first sync.
+    expect(find.textContaining('Synced'), findsOneWidget);
     expect(runtime.scheduler.status.totalSyncs, 1);
   });
 
@@ -396,7 +270,7 @@ void main() {
     // The real refresh action reached the server and lit the status.
     expect(runtime.scheduler.status.totalSyncs, 1);
     expect(client.callCount(Method.listTasklists), greaterThan(0));
-    expect(find.textContaining('Last downloaded'), findsOneWidget);
+    expect(find.textContaining('Synced'), findsOneWidget);
   });
 
   testWidgets('pull-to-refresh triggers a sync when a session is live', (
@@ -570,22 +444,6 @@ void main() {
       expect(desktop.browserOpens, isEmpty);
     });
 
-    testWidgets('read-write sync on, auto-sync off still raises it', (
-      tester,
-    ) async {
-      final desktop = unconfigured();
-      final runtime = await makeRuntime(
-        tokenProvider: desktop.provider,
-        autoSyncOnStart: false,
-        pushEnabled: true,
-      );
-
-      await runtime.restoreAndAutoSync();
-      await pumpFooter(tester, runtime);
-
-      expect(find.text('Setup required'), findsOneWidget);
-    });
-
     testWidgets('a session on disk raises it even with sync fully off', (
       tester,
     ) async {
@@ -605,7 +463,7 @@ void main() {
     testWidgets('a deliberately local-only install keeps the quiet idle', (
       tester,
     ) async {
-      // Auto-sync off, push off, no session: nothing about this launch was
+      // Auto-sync off, no session: nothing about this launch was
       // meant to reach Google, so nagging about credentials would be noise.
       final desktop = unconfigured();
       final runtime = await makeRuntime(

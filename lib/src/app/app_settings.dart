@@ -10,7 +10,6 @@ class AppSettingsView {
   const AppSettingsView({
     required this.version,
     required this.instance,
-    required this.pushEnabled,
     required this.autoSyncOnStart,
     required this.authenticated,
     required this.needsReauth,
@@ -27,9 +26,6 @@ class AppSettingsView {
 
   /// The active instance prefix, or `null` for the default/production instance.
   final String? instance;
-
-  /// Whether local edits are pushed to Google (read-write sync).
-  final bool pushEnabled;
 
   /// Whether the app auto-syncs once on startup.
   final bool autoSyncOnStart;

@@ -44,7 +44,6 @@ const Map<String, String> _familyAction = <String, String>{
   'auth_login': 'update your Google sign-in',
   'auth_logout': 'update your Google sign-in',
   'get_settings': 'update your settings',
-  'set_push_enabled': 'update your settings',
   'set_auto_sync': 'update your settings',
   'set_editing': 'update your settings',
   'export_backup': 'export your backup',

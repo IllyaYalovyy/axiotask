@@ -62,7 +62,7 @@ class BootstrapReady extends BootstrapResult {
   final AppDatabase database;
 
   /// The loaded config controller — the composition root reads the desktop
-  /// OAuth credentials + the push/auto-sync toggles from it.
+  /// OAuth credentials + the auto-sync toggle from it.
   final ConfigController configController;
 
   /// The UI-prefs store — the entry point feeds it to the window service for

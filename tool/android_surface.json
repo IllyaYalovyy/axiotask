@@ -39,7 +39,6 @@
     "Switch to*"
   ],
   "properties: sync": [
-    "Read-write sync",
     "Auto-sync on startup",
     "View activity",
     "Sync now",

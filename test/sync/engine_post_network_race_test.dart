@@ -30,16 +30,13 @@ const _tRace = '2026-06-03T00:00:00Z';
 /// A fresh engine over an in-memory store and fake API, torn down with the test.
 /// [store] lets a test substitute a [Store] subclass that interleaves an edit.
 Future<(FakeTasksApi, SyncEngine)> engine({
-  bool push = false,
   Store Function(AppDatabase db)? store,
 }) async {
   final client = FakeTasksApi();
   final db = await AppDatabase.openMemory();
   addTearDown(db.close);
   final s = store == null ? Store(db) : store(db);
-  final eng = push
-      ? SyncEngine.withPush(client, s, true)
-      : SyncEngine(client, s);
+  final eng = SyncEngine(client, s);
   return (client, eng);
 }
 
@@ -80,7 +77,7 @@ void main() {
       // Site 1 — the base-merge branch of `_resolveConflict` writes a row that
       // was drained at the START of the update pass, a 412 and a GET ago. The
       // user typing into that very row in the meantime must not be erased.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'One');
       final seeded = client.seedTask('L1', 'r1', 'alpha', '1');
       await eng.store.upsertTask(
@@ -166,7 +163,7 @@ void main() {
   test('an edit during a refused move survives and is pushed', () async {
     // Site 2 — `_revertLocalMove` writes back a snapshot taken before the move
     // call, which can spend several backoff retries in the air.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'One');
     final seeded = client.seedTask('L1', 'r1', 'alpha', '1');
     await eng.store.upsertTask(
@@ -231,7 +228,7 @@ void main() {
   test('an edit landing inside the D7 flatten survives the promotion', () async {
     // Site 3 — the flatten re-reads the row, so the window is between THAT read
     // and its write rather than around a network call. `_RacingStore` fires the
-    // edit inside exactly that gap. Read-only sync (no push), so the flatten
+    // edit inside exactly that gap. The corrective move fails, so the flatten
     // takes the local-only `_promoteAndDetach` branch.
     late _RacingStore racing;
     final (client, eng) = await engine(
@@ -274,6 +271,7 @@ void main() {
       );
     });
 
+    client.failNext(Method.moveTask, () => const ServerError(503));
     await eng.run();
     expect(racing.fired, isTrue, reason: 'precondition: the gap really raced');
     final after = await eng.store.findTaskAny(gid);
@@ -303,7 +301,7 @@ void main() {
       // in-flight marker's base came from the CURRENT row. An edit made while
       // an EARLIER row was inserting split the two apart, so the lost response
       // to this row's insert could not recognize its own orphan.
-      final (client, eng) = await engine(push: true);
+      final (client, eng) = await engine();
       await seedSyncedList(client, eng.store, 'L1', 'One');
       for (var i = 1; i <= 4; i++) {
         await eng.store.upsertTask(
@@ -372,7 +370,7 @@ void main() {
     // Site 5 — a row the D7 flatten / pull detach / move revert stripped the
     // etag from is still server-backed. Patching it without `If-Match` is an
     // unconditional overwrite: no 412, no conflicted copy, remote-wins gone.
-    final (client, eng) = await engine(push: true);
+    final (client, eng) = await engine();
     await seedSyncedList(client, eng.store, 'L1', 'One');
     final seeded = client.seedTask('L1', 'r1', 'alpha', '1');
     await eng.store.upsertTask(

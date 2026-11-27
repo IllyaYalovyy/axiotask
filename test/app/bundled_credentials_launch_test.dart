@@ -119,7 +119,7 @@ void main() {
 
     // Every write path the app has over that file: the default written by
     // bootstrap, and a settings toggle re-saving it.
-    await launch.ready.configController.setPushEnabled(true);
+    await launch.ready.configController.setAutoSyncOnStart(false);
 
     final onDisk = launch.ready.configController.path;
     final text = onDisk.readAsStringSync();
@@ -133,7 +133,11 @@ void main() {
     final reloaded = AppConfig.loadFrom(onDisk)!;
     expect(reloaded.google.clientId, isEmpty);
     expect(reloaded.google.clientSecret, isEmpty);
-    expect(reloaded.sync.pushEnabled, isTrue, reason: 'the toggle did persist');
+    expect(
+      reloaded.sync.autoSyncOnStart,
+      isFalse,
+      reason: 'the toggle did persist',
+    );
   });
 
   testWidgets('a build with nothing bundled still fails loud (#228 intact)', (

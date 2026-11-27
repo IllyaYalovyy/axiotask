@@ -84,7 +84,7 @@ class AuthSyncStatus {
   /// of truth, but a fresh scheduler failure lands in the sync status first, so
   /// honoring either keeps the footer correct in the window before they agree.
   /// [syncIntended] gates the missing-credentials attention: an install that
-  /// never syncs by choice (auto-sync off, push off, no session) is legitimately
+  /// never syncs by choice (auto-sync off, no session) is legitimately
   /// quiet, so it keeps the plain signed-out idle (#228).
   factory AuthSyncStatus.from({
     required AuthSnapshot auth,

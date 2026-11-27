@@ -42,7 +42,7 @@ class FakeAuthState implements AuthState {
 }
 
 /// A scheduler wired over a fresh in-memory store and fake API, torn down with
-/// the test. Mirrors the reference's `new_memory` / `new_memory_with_push`.
+/// the test. Mirrors the reference's `new_memory`.
 class Harness {
   Harness(this.client, this.store, this.auth, this.scheduler, this.commands);
 
@@ -53,7 +53,7 @@ class Harness {
   final Commands commands;
 }
 
-Future<Harness> makeHarness({bool push = false, bool signedIn = false}) async {
+Future<Harness> makeHarness({bool signedIn = false}) async {
   final client = FakeTasksApi();
   final db = await AppDatabase.openMemory();
   addTearDown(db.close);
@@ -63,7 +63,6 @@ Future<Harness> makeHarness({bool push = false, bool signedIn = false}) async {
     store: store,
     client: () => client,
     auth: auth,
-    pushEnabled: () => push,
   );
   addTearDown(scheduler.dispose);
   return Harness(client, store, auth, scheduler, Commands(store));
@@ -240,7 +239,7 @@ void main() {
 
     test('the public surface emits the sanitized projection — no raw error '
         'text ever rides a snapshot (#131/#187)', () async {
-      final h = await makeHarness(push: true);
+      final h = await makeHarness();
       h.client.seedList('L1', 'Inbox');
 
       // Type it as Object so this asserts the RUNTIME type of what's emitted:
@@ -289,7 +288,7 @@ void main() {
   group('auth — the three-state machine (#6)', () {
     test('expired session sets needs-reauth with an actionable error, then '
         'a working sync clears it', () async {
-      final h = await makeHarness(push: true, signedIn: true);
+      final h = await makeHarness(signedIn: true);
       h.client.seedList('L1', 'Inbox');
       expect(h.auth.needsReauth, isFalse);
 
@@ -317,7 +316,7 @@ void main() {
     });
 
     test('exposes three distinct states, not two', () async {
-      final h = await makeHarness(push: true);
+      final h = await makeHarness();
       h.client.seedList('L1', 'Inbox');
 
       // State 1 — SIGNED OUT: no session, no re-auth prompt.
@@ -350,7 +349,7 @@ void main() {
     test(
       'flags attention, backs off, surfaces the real error, then recovers',
       () async {
-        final h = await makeHarness(push: true);
+        final h = await makeHarness();
         h.client.seedList('L1', 'Inbox');
         expect(h.scheduler.status.needsAttention, isFalse);
         final base = h.scheduler.nextSyncPeriod();
@@ -398,7 +397,7 @@ void main() {
     );
 
     test('a transient failure never flags attention or backs off', () async {
-      final h = await makeHarness(push: true);
+      final h = await makeHarness();
       final base = h.scheduler.nextSyncPeriod();
 
       // A 5xx on the lists pull is transient; the engine swallows it into a
@@ -421,7 +420,7 @@ void main() {
       int count(LogLevel level, String needle) =>
           records.where((r) => r.$1 == level && r.$2.contains(needle)).length;
 
-      final h = await makeHarness(push: true);
+      final h = await makeHarness();
       h.client.seedList('L1', 'Inbox');
 
       // The same permanent failure twice, then a genuinely different one.
@@ -489,7 +488,7 @@ void main() {
     );
 
     test('the loop cycle skips the run while the session is dead', () async {
-      final h = await makeHarness(push: true, signedIn: true);
+      final h = await makeHarness(signedIn: true);
       h.auth.setNeedsReauth(true); // dead session
       h.client.seedList('REMOTE', 'Remote List');
 
@@ -507,7 +506,7 @@ void main() {
 
   group('flush on exit', () {
     test('pushes a change made just before quitting', () async {
-      final h = await makeHarness(push: true, signedIn: true);
+      final h = await makeHarness(signedIn: true);
       h.client.seedList('L1', 'Inbox');
       await h.scheduler.runSync(); // pull the list locally
 
@@ -536,7 +535,7 @@ void main() {
     });
 
     test('does nothing when signed out', () async {
-      final h = await makeHarness(); // not signed in, push off
+      final h = await makeHarness(); // not signed in
       await seedLocalList(h.store, 'L1', 'Inbox');
       await h.commands.createTask(listId: 'L1', title: 'offline task');
 
@@ -551,34 +550,8 @@ void main() {
       expect(await remoteHasTitle(h.client, 'L1', 'offline task'), isFalse);
     });
 
-    test('does nothing in read-only mode', () async {
-      final h = await makeHarness(push: false, signedIn: true);
-      h.client.seedList('L1', 'Inbox');
-      // Pull the list locally via a temporarily push-off... actually push is
-      // already off; a plain sync pulls the seeded list.
-      await h.scheduler.runSync();
-
-      await h.commands.createTask(
-        listId: await pulledList(h.store, 'L1'),
-        title: 'read only',
-      );
-
-      await h.scheduler.flushOnExit();
-
-      expect(
-        await taskStillDirty(
-          h.store,
-          await pulledList(h.store, 'L1'),
-          'read only',
-        ),
-        isTrue,
-        reason: 'read-only mode keeps the change local on exit',
-      );
-      expect(await remoteHasTitle(h.client, 'L1', 'read only'), isFalse);
-    });
-
     test('does nothing with a dead session', () async {
-      final h = await makeHarness(push: true, signedIn: true);
+      final h = await makeHarness(signedIn: true);
       h.client.seedList('L1', 'Inbox');
       await h.scheduler.runSync(); // pull the list locally
 

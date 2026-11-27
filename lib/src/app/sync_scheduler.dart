@@ -260,7 +260,6 @@ class SyncScheduler {
     required this.store,
     required this.client,
     required this.auth,
-    required this.pushEnabled,
     this.debounce = kSyncDebounce,
     this.period = kSyncPeriod,
   });
@@ -275,9 +274,6 @@ class SyncScheduler {
 
   /// The auth seam: is a session live, and is it dead (needs-reauth)?
   final AuthState auth;
-
-  /// Whether local changes are pushed (read-write) vs pulled only (read-only).
-  final bool Function() pushEnabled;
 
   /// Debounce window and idle poll cadence (injectable for deterministic tests).
   final Duration debounce;
@@ -406,10 +402,9 @@ class SyncScheduler {
   Future<SyncOutcome> runSync() => _serialized(_runSyncInner);
 
   Future<SyncOutcome> _runSyncInner() async {
-    final engine = SyncEngine.withPush(
+    final engine = SyncEngine(
       client(),
       store,
-      pushEnabled(),
       poison: _poison,
       conflicts: _conflicts,
     );
@@ -561,13 +556,13 @@ class SyncScheduler {
   /// after the debounce — so a change made and then immediately quit is stranded
   /// dirty until the next launch. On exit we push it now instead.
   ///
-  /// Only acts when it can actually push — signed in, push enabled, session
-  /// alive, and something pending — otherwise a pointless or destructive round
-  /// trip is skipped (a signed-out flush would push to the throwaway offline
+  /// Only acts when it can actually push — signed in, session alive, and
+  /// something pending — otherwise a pointless or destructive round trip is
+  /// skipped (a signed-out flush would push to the throwaway offline
   /// client and wrongly mark rows clean). Bounded by [kExitSyncTimeout] so a
   /// hung network can never block the app from closing.
   Future<void> flushOnExit() async {
-    if (!auth.isAuthenticated || !pushEnabled() || auth.needsReauth) {
+    if (!auth.isAuthenticated || auth.needsReauth) {
       return;
     }
     // Nothing dirty → don't delay exit on a network round trip.

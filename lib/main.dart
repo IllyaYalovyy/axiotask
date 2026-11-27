@@ -113,7 +113,7 @@ AuthSyncRuntime buildRuntime(
     tokenProvider: tokenProvider,
     buildClient: buildClient,
     // Someone with a session on disk is not local-only by choice, so missing
-    // credentials stay loud for them even with both sync toggles off (#228).
+    // credentials stay loud for them even with auto-sync off (#228).
     hasStoredSession: hasStoredSession,
   );
 }
