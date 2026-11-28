@@ -135,6 +135,9 @@ class Device:
 
     def tap(self, label, index=0):
         node = self.wait(label)[index]
+        self.tap_node(node)
+
+    def tap_node(self, node):
         self.adb('shell', 'input', 'tap',
                  str((node[1] + node[3]) // 2), str((node[2] + node[4]) // 2))
         time.sleep(1)
@@ -154,7 +157,6 @@ class Device:
         start, end = (near, far) if direction == 'right' else (far, near)
         self.adb('shell', 'input', 'swipe', str(start), str(y), str(end),
                  str(y), '250')
-        time.sleep(1.5)
 
     def scroll(self, direction):
         """Moves the content of the screen by about a third of its height."""
@@ -322,12 +324,15 @@ def checks(surface, version):
 
     def swipe_right_completes(device):
         device.swipe(row, 'right')
-        device.tap('Undo')
-        device.wait(row)
-        # Without Undo the swiped task leaves the open tasks.
-        device.swipe(row, 'right')
-        device.wait(row, gone=True)
-        device.tap('Undo')
+        # Read both outcomes in one snapshot. A second UIAutomator dump can
+        # outlast the five-second Undo button and tap the tab underneath it.
+        nodes = device.nodes()
+        if any(node[0].startswith(row[:-1]) for node in nodes):
+            raise Failed('the swiped task is still in the open list')
+        undo = next((node for node in nodes if node[0] == 'Undo'), None)
+        if undo is None:
+            raise Failed('swiping the task did not offer Undo')
+        device.tap_node(undo)
         device.wait(row)
 
     def swipe_left_schedules(device):

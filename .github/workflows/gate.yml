@@ -44,6 +44,12 @@ jobs:
           # history has to be there. A shallow clone has no merge base.
           fetch-depth: 0
 
+      - name: Verify the change increments the application version
+        if: github.event_name == 'pull_request' || github.event.before != '0000000000000000000000000000000000000000'
+        env:
+          KTASK_BASE_COMMIT: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tool/check_task_version.py
+
       # The packaging suites drive REAL external tools: cairosvg for the icon
       # rasters, GdkPixbuf for the loader GNOME uses, and the two freedesktop
       # validators for the metainfo and the desktop entry. None of those

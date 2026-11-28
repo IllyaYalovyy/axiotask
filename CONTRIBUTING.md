@@ -5,14 +5,14 @@ Git Identity
 All commits MUST use:
 
   Name:  Illya Yalovyy
-  Email: yalovoy@gmail.com
+  Email: 1623643+IllyaYalovyy@users.noreply.github.com
 
 Before starting work, verify:
 
   git config user.name   # must be "Illya Yalovyy"
-  git config user.email  # must be "yalovoy@gmail.com"
+  git config user.email  # must be "1623643+IllyaYalovyy@users.noreply.github.com"
 
-NEVER commit with any other identity (corporate, noreply, etc).
+Use this sole author, preserve commit hooks, and omit co-author trailers.
 
 Sensitive Data
 
@@ -84,5 +84,12 @@ update the newest entry's version attribute. 1.0.0 is the first release
 
 Push Policy
 
-Do not push to remote unless explicitly instructed.
-All work stays local until a deliberate decision to publish.
+For every axiotask ktask change, increment the app version and build number,
+update About and AppStream, and run the project checks. The supervisor commits
+the verified change and delivers it to origin/main. A task is complete only
+when its commit is on remote main. A local commit or an unmerged branch leaves
+delivery pending. Create a release tag only when a release is requested.
+
+Use automated tests and the Android emulator for required verification. A
+physical device is optional. Its availability must never block a task, push,
+merge, or release.
